@@ -13,7 +13,7 @@ from pathlib import Path
 
 from autostepper.audio.analyzer import BeatAnalyzer
 from autostepper.stepgen.generator import StepGenerator
-from autostepper.formats.stepmania import SMExporter
+from autostepper.formats.stepmania_ssc import SSCExporter
 
 
 def create_test_audio(filename, duration=10, bpm=120, sample_rate=22050):
@@ -54,14 +54,14 @@ def create_test_audio(filename, duration=10, bpm=120, sample_rate=22050):
 
     # Save as WAV file
     sf.write(filename, audio, sample_rate)
-    print(f"✅ Created test audio: {filename}")
+    print(f"Created test audio: {filename}")
     print(f"   Duration: {duration}s, BPM: {bpm}, Sample Rate: {sample_rate}Hz")
 
 
 def test_pipeline():
     """Test the complete AutoStepper pipeline"""
 
-    print("🎵 AutoStepper MVP Test")
+    print("AutoStepper MVP Test")
     print("=" * 40)
 
     # Create temporary audio file
@@ -78,55 +78,55 @@ def test_pipeline():
         analyzer = BeatAnalyzer()
         audio_data = analyzer.load_and_analyze(temp_audio_path)
 
-        print(f"   ✅ Detected BPM: {audio_data['tempo']:.1f}")
-        print(f"   ✅ Found {len(audio_data['beats'])} beats")
-        print(f"   ✅ Confidence: {audio_data['confidence']:.2f}")
-        print(f"   ✅ Duration: {audio_data['duration']:.1f}s")
+        print(f"   Detected BPM: {audio_data['tempo']:.1f}")
+        print(f"   Found {len(audio_data['beats'])} beats")
+        print(f"   Confidence: {audio_data['confidence']:.2f}")
+        print(f"   Duration: {audio_data['duration']:.1f}s")
 
-        # Step 3: Generate step patterns for different difficulties
-        difficulties = ['easy', 'medium', 'hard', 'expert']
+        # Step 3: Generate step patterns for all difficulties
+        print("\n3. Generating step charts for all difficulties...")
 
-        for difficulty in difficulties:
-            print(f"\n3.{difficulties.index(difficulty)+1}. Generating {difficulty} step chart...")
+        charts = StepGenerator.generate_all_difficulties(
+            audio_data,
+            title_override="Test Song",
+            artist_override="AutoStepper MVP"
+        )
 
-            generator = StepGenerator(difficulty=difficulty)
-            step_chart = generator.generate_chart(
-                audio_data,
-                title_override=f"Test Song ({difficulty.title()})",
-                artist_override="AutoStepper MVP"
-            )
+        for chart in charts:
+            difficulty = chart['difficulty']['description']
+            step_count = len(chart['notes'])
+            density = chart['analysis_info']['step_density']
+            print(f"   {difficulty.capitalize()}: {step_count} steps (density: {density:.2f})")
 
-            print(f"     ✅ Generated {len(step_chart['notes'])} steps")
-            print(f"     ✅ Step density: {step_chart['analysis_info']['step_density']:.2f}")
+        # Step 4: Export to .ssc file (all difficulties in one file)
+        print("\n4. Exporting to .ssc file...")
+        output_dir = Path("./test_output")
+        output_dir.mkdir(exist_ok=True)
+        output_file = output_dir / "test_song.ssc"
 
-            # Step 4: Export to .sm file
-            output_dir = Path("./test_output")
-            output_dir.mkdir(exist_ok=True)
-            output_file = output_dir / f"test_song_{difficulty}.sm"
+        exporter = SSCExporter()
+        exporter.export_charts(charts, output_file)
 
-            exporter = SMExporter()
-            exporter.export_chart(step_chart, output_file)
+        print(f"   Exported: {output_file}")
 
-            print(f"     ✅ Exported: {output_file}")
-
-        print(f"\n🎉 Pipeline test completed successfully!")
-        print(f"📁 Output files created in: ./test_output/")
-        print(f"🎯 Test audio BPM: 128 (expected) vs {audio_data['tempo']:.1f} (detected)")
+        print(f"\nPipeline test completed successfully!")
+        print(f"Output file: {output_file}")
+        print(f"Test audio BPM: 128 (expected) vs {audio_data['tempo']:.1f} (detected)")
 
         # Display some sample step data
-        sample_chart = step_chart  # Last generated chart (expert)
-        print(f"\n📊 Sample Steps (Expert difficulty):")
-        for i, step in enumerate(sample_chart['notes'][:5]):  # Show first 5 steps
+        expert_chart = charts[-1]  # Expert is last
+        print(f"\nSample Steps (Expert difficulty):")
+        for i, step in enumerate(expert_chart['notes'][:5]):  # Show first 5 steps
             directions = ", ".join(step['directions'])
             print(f"   Step {i+1}: {step['time']:.2f}s - {step['type']} - {directions}")
 
-        if len(sample_chart['notes']) > 5:
-            print(f"   ... and {len(sample_chart['notes']) - 5} more steps")
+        if len(expert_chart['notes']) > 5:
+            print(f"   ... and {len(expert_chart['notes']) - 5} more steps")
 
         return True
 
     except Exception as e:
-        print(f"❌ Test failed: {str(e)}")
+        print(f"Test failed: {str(e)}")
         import traceback
         traceback.print_exc()
         return False

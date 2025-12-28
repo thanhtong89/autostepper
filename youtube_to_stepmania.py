@@ -11,190 +11,161 @@ https://github.com/phr00t/AutoStepper
 
 import subprocess
 import sys
-import shutil
 from pathlib import Path
 import click
-import tempfile
-import zipfile
 
 
-def run_youtube_download(youtube_url, difficulty='medium'):
-    """Download from YouTube and generate charts"""
+def sanitize_filename(name: str) -> str:
+    """Sanitize filename by trimming spaces and replacing invalid characters"""
+    name = name.strip()
+    for char in ['/', '\\', ':', '*', '?', '"', '<', '>', '|']:
+        name = name.replace(char, '_')
+    name = name.replace(' ', '_')
+    while '__' in name:
+        name = name.replace('__', '_')
+    return name
 
-    print("🎵 Step 1: Downloading from YouTube...")
 
-    # Use our existing download script
+def download_youtube_audio(youtube_url, output_dir="./downloads"):
+    """Download audio from YouTube using yt-dlp"""
+
+    print("Step 1: Downloading from YouTube...")
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     cmd = [
-        sys.executable, "download_demo.py",
-        "-u", youtube_url,
-        "--test",
-        "-d", difficulty
+        "yt-dlp",
+        "-x",  # Extract audio
+        "--audio-format", "mp3",
+        "--audio-quality", "0",  # Best quality
+        "-o", str(output_dir / "%(title)s.%(ext)s"),
+        youtube_url
     ]
 
     try:
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-        print("✅ Download and chart generation successful!")
-        return True
+        print("   Download successful!")
+
+        # Find the downloaded file
+        audio_files = list(output_dir.glob("*.mp3"))
+        if audio_files:
+            latest_audio = max(audio_files, key=lambda f: f.stat().st_mtime)
+            return latest_audio
+        return None
+
     except subprocess.CalledProcessError as e:
-        print("❌ YouTube download failed:")
-        print(e.stdout)
-        print(e.stderr)
-        return False
+        print(f"   Download failed: {e.stderr}")
+        return None
+    except FileNotFoundError:
+        print("   Error: yt-dlp not found. Install with: pip install yt-dlp")
+        return None
 
 
-def find_generated_files():
-    """Find the most recently generated audio and chart files"""
+def generate_chart(audio_file, output_dir="./youtube_charts"):
+    """Generate step chart with all difficulties"""
 
-    downloads_dir = Path("./downloads")
-    charts_dir = Path("./youtube_charts")
+    print("Step 2: Generating step chart...")
 
-    if not downloads_dir.exists() or not charts_dir.exists():
-        return None, []
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Find most recent audio file
-    audio_files = []
-    for ext in ['*.mp3', '*.m4a', '*.wav', '*.webm']:
-        audio_files.extend(downloads_dir.glob(ext))
+    cmd = [
+        sys.executable, "autostepper.py",
+        "-i", str(audio_file),
+        "-o", str(output_dir),
+        "-v"
+    ]
 
-    if not audio_files:
-        return None, []
+    try:
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        print(result.stdout)
 
-    latest_audio = max(audio_files, key=lambda f: f.stat().st_mtime)
+        # Find the generated chart file
+        chart_files = list(output_dir.glob("*.ssc"))
+        if chart_files:
+            latest_chart = max(chart_files, key=lambda f: f.stat().st_mtime)
+            return latest_chart
+        return None
 
-    # Find corresponding chart files
-    # Get base name without extension
-    base_name = latest_audio.stem
-
-    # Find all .sm files that start with this base name
-    chart_files = []
-    for sm_file in charts_dir.glob("*.sm"):
-        if sm_file.stem.startswith(base_name.replace(" ", "_")):
-            chart_files.append(sm_file)
-
-    return latest_audio, chart_files
-
-
-def generate_all_difficulties(audio_file):
-    """Generate charts for all difficulty levels"""
-
-    difficulties = ['easy', 'medium', 'hard', 'expert']
-
-    print("🎯 Step 2: Generating all difficulty charts...")
-
-    for difficulty in difficulties:
-        print(f"   Generating {difficulty} chart...")
-
-        cmd = [
-            sys.executable, "autostepper.py",
-            "-i", str(audio_file),
-            "-d", difficulty,
-            "-o", "./youtube_charts/",
-        ]
-
-        try:
-            subprocess.run(cmd, check=True, capture_output=True, text=True)
-            print(f"   ✅ {difficulty.capitalize()} chart created")
-        except subprocess.CalledProcessError as e:
-            print(f"   ❌ Failed to create {difficulty} chart")
-            print(e.stderr)
+    except subprocess.CalledProcessError as e:
+        print(f"   Chart generation failed: {e.stderr}")
+        return None
 
 
-def create_stepmania_package(audio_file, chart_files):
-    """Create a complete StepMania package"""
+def create_stepmania_package(audio_file, chart_file, output_dir="./stepmania_packages"):
+    """Create a complete StepMania/ITGMania package"""
 
-    print("📦 Step 3: Creating StepMania package...")
+    print("Step 3: Creating StepMania package...")
 
-    # Import the packaging functions
     from package_song import create_song_package, create_zip_package
 
     try:
         package_dir = create_song_package(
             audio_file=audio_file,
-            sm_files=chart_files,
-            output_dir="./stepmania_packages",
+            chart_file=chart_file,
+            output_dir=output_dir,
             include_banner=True
         )
 
-        # Create zip file for easy distribution
         zip_path = create_zip_package(package_dir)
-
         return package_dir, zip_path
 
     except Exception as e:
-        print(f"❌ Packaging failed: {e}")
+        print(f"   Packaging failed: {e}")
         return None, None
 
 
 @click.command()
 @click.option('--url', '-u', required=True, help='YouTube video URL')
-@click.option('--all-difficulties/--single-difficulty', default=True,
-              help='Generate all difficulty levels')
-@click.option('--difficulty', '-d', default='medium',
-              type=click.Choice(['easy', 'medium', 'hard', 'expert']),
-              help='Difficulty level (if not generating all)')
 @click.option('--package/--no-package', default=True,
               help='Create StepMania package for distribution')
-def main(url, all_difficulties, difficulty, package):
-    """Complete YouTube to StepMania pipeline"""
+@click.option('--output', '-o', default='./youtube_charts',
+              help='Output directory for charts')
+def main(url, package, output):
+    """Complete YouTube to StepMania/ITGMania pipeline"""
 
-    print("🎵 YouTube → StepMania Complete Pipeline")
+    print("YouTube to StepMania Pipeline")
     print("=" * 50)
-    print(f"🔗 URL: {url}")
-    print(f"🎯 Mode: {'All difficulties' if all_difficulties else f'{difficulty} only'}")
-    print(f"📦 Package: {'Yes' if package else 'No'}")
+    print(f"URL: {url}")
+    print(f"Package: {'Yes' if package else 'No'}")
     print()
 
-    # Step 1: Download and generate initial chart
-    success = run_youtube_download(url, difficulty)
-    if not success:
-        sys.exit(1)
-
-    # Find the downloaded files
-    audio_file, initial_charts = find_generated_files()
+    # Step 1: Download audio from YouTube
+    audio_file = download_youtube_audio(url)
     if not audio_file:
-        print("❌ Could not find downloaded audio file")
+        print("Could not download audio from YouTube")
         sys.exit(1)
 
-    print(f"📁 Found audio: {audio_file.name}")
-    print(f"📄 Found {len(initial_charts)} initial charts")
+    print(f"   Audio: {audio_file.name}")
 
-    # Step 2: Generate all difficulties if requested
-    if all_difficulties:
-        generate_all_difficulties(audio_file)
-
-        # Re-scan for all chart files
-        _, all_charts = find_generated_files()
-        chart_files = all_charts
-    else:
-        chart_files = initial_charts
-
-    if not chart_files:
-        print("❌ No chart files found")
+    # Step 2: Generate chart (all difficulties in one .ssc file)
+    chart_file = generate_chart(audio_file, output_dir=output)
+    if not chart_file:
+        print("Could not generate step chart")
         sys.exit(1)
 
-    print(f"📊 Total charts: {len(chart_files)}")
-    for chart in chart_files:
-        print(f"   - {chart.name}")
+    print(f"   Chart: {chart_file.name}")
 
     # Step 3: Create StepMania package if requested
     if package:
-        package_dir, zip_path = create_stepmania_package(audio_file, chart_files)
+        package_dir, zip_path = create_stepmania_package(audio_file, chart_file)
 
         if package_dir and zip_path:
-            print(f"\n🎉 Complete pipeline successful!")
-            print(f"📁 Package folder: {package_dir}")
-            print(f"📦 Distribution zip: {zip_path}")
-            print(f"\n🎮 Ready to share with StepMania users:")
-            print(f"   1. Send them: {zip_path.name}")
-            print(f"   2. They extract to StepMania/Songs/")
-            print(f"   3. They refresh StepMania (F5) and play!")
+            print(f"\nPipeline complete!")
+            print(f"Package folder: {package_dir}")
+            print(f"Distribution zip: {zip_path}")
+            print(f"\nTo use with ITGMania/StepMania:")
+            print(f"   1. Extract {zip_path.name} to your Songs folder")
+            print(f"   2. Refresh song list (F5)")
+            print(f"   3. Play!")
         else:
-            print("❌ Packaging failed")
+            print("Packaging failed")
             sys.exit(1)
     else:
-        print(f"\n🎉 Chart generation complete!")
-        print(f"📁 Audio: {audio_file}")
-        print(f"📄 Charts: {len(chart_files)} files in ./youtube_charts/")
+        print(f"\nChart generation complete!")
+        print(f"Audio: {audio_file}")
+        print(f"Chart: {chart_file}")
 
 
 if __name__ == '__main__':

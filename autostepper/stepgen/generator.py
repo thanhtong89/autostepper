@@ -257,3 +257,33 @@ class StepGenerator:
             'expert': 8
         }
         return ratings.get(self.difficulty, 4)
+
+    @classmethod
+    def generate_all_difficulties(cls, audio_data, title_override=None, artist_override=None,
+                                   difficulties=None):
+        """
+        Generate charts for all difficulty levels
+
+        Args:
+            audio_data: Audio analysis data from BeatAnalyzer
+            title_override: Optional title override
+            artist_override: Optional artist override
+            difficulties: List of difficulties to generate (default: all)
+
+        Returns:
+            List of chart data dictionaries, one per difficulty
+        """
+        if difficulties is None:
+            difficulties = ['easy', 'medium', 'hard', 'expert']
+
+        charts = []
+        for difficulty in difficulties:
+            generator = cls(difficulty=difficulty)
+            chart = generator.generate_chart(
+                audio_data,
+                title_override=title_override,
+                artist_override=artist_override
+            )
+            charts.append(chart)
+
+        return charts

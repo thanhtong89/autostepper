@@ -9,3 +9,5 @@ venv/
 downloads/
 stepmania_packages/
 youtube_charts/
+output/
+test_output/

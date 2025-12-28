@@ -82,7 +82,7 @@ def extract_song_info(chart_file_path):
         return "Unknown Title", "Unknown Artist"
 
 
-def create_song_package(audio_file, chart_file, output_dir="./stepmania_packages", include_banner=True):
+def create_song_package(audio_file, chart_file, output_dir="./stepmania_packages", include_banner=True, quiet=False):
     """
     Create a complete StepMania/ITGMania song package
 
@@ -91,6 +91,7 @@ def create_song_package(audio_file, chart_file, output_dir="./stepmania_packages
         chart_file: Path to the .ssc chart file
         output_dir: Where to create the package
         include_banner: Whether to generate a banner image
+        quiet: Suppress progress output
 
     Returns:
         Tuple of (package_dir, list of files added)
@@ -117,7 +118,8 @@ def create_song_package(audio_file, chart_file, output_dir="./stepmania_packages
     package_dir = output_dir / folder_name
     package_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Creating StepMania package: {folder_name}")
+    if not quiet:
+        print(f"Creating StepMania package: {folder_name}")
 
     # Track files we add to the package
     package_files = []
@@ -127,14 +129,16 @@ def create_song_package(audio_file, chart_file, output_dir="./stepmania_packages
     audio_dest = package_dir / audio_dest_name
     shutil.copy2(audio_path, audio_dest)
     package_files.append(audio_dest)
-    print(f"   Copied audio: {audio_dest_name}")
+    if not quiet:
+        print(f"   Copied audio: {audio_dest_name}")
 
     # Copy chart file with sanitized name
     chart_dest_name = sanitize_filename(chart_path.stem) + chart_path.suffix
     chart_dest = package_dir / chart_dest_name
     shutil.copy2(chart_path, chart_dest)
     package_files.append(chart_dest)
-    print(f"   Copied chart: {chart_dest_name}")
+    if not quiet:
+        print(f"   Copied chart: {chart_dest_name}")
 
     # Create banner image
     if include_banner:
@@ -142,9 +146,11 @@ def create_song_package(audio_file, chart_file, output_dir="./stepmania_packages
             banner_path = package_dir / "banner.png"
             create_banner_image(song_title, artist_name, banner_path)
             package_files.append(banner_path)
-            print(f"   Generated banner: banner.png")
+            if not quiet:
+                print(f"   Generated banner: banner.png")
         except Exception as e:
-            print(f"   Could not create banner: {e}")
+            if not quiet:
+                print(f"   Could not create banner: {e}")
 
     # Create a README for the package
     readme_content = f"""# {song_title} - {artist_name}
@@ -173,12 +179,13 @@ Contains Easy, Medium, Hard, and Challenge difficulty levels.
     readme_path = package_dir / "README.txt"
     readme_path.write_text(readme_content)
     package_files.append(readme_path)
-    print(f"   Created README: README.txt")
+    if not quiet:
+        print(f"   Created README: README.txt")
 
     return package_dir, package_files
 
 
-def create_zip_package(package_dir, package_files=None):
+def create_zip_package(package_dir, package_files=None, quiet=False):
     """
     Create a zip file of the song package
 
@@ -186,6 +193,7 @@ def create_zip_package(package_dir, package_files=None):
         package_dir: Path to package directory
         package_files: Optional list of specific files to include.
                       If None, includes all files in the directory.
+        quiet: Suppress progress output
     """
     package_path = Path(package_dir)
     zip_path = package_path.with_suffix('.zip')
@@ -205,7 +213,8 @@ def create_zip_package(package_dir, package_files=None):
                     arcname = file_path.relative_to(package_path.parent)
                     zip_file.write(file_path, arcname)
 
-    print(f"Created zip package: {zip_path}")
+    if not quiet:
+        print(f"Created zip package: {zip_path}")
     return zip_path
 
 

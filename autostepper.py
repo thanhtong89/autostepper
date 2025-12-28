@@ -52,17 +52,15 @@ def download_youtube_audio(youtube_url, output_dir):
 
 def generate_charts(audio_path, title_override=None, artist_override=None, verbose=False):
     """Analyze audio and generate step charts for all difficulties"""
-    if verbose:
-        print("Analyzing audio...")
+    print("[2/4] Analyzing audio...")
 
     analyzer = BeatAnalyzer()
     audio_data = analyzer.load_and_analyze(audio_path)
 
     if verbose:
-        print(f"   BPM: {audio_data['tempo']:.1f}")
-        print(f"   Beats: {len(audio_data['beats'])}")
-        print(f"   Confidence: {audio_data.get('confidence', 0.0):.2f}")
-        print("Generating step patterns...")
+        print(f"      BPM: {audio_data['tempo']:.1f}, Beats: {len(audio_data['beats'])}, Confidence: {audio_data.get('confidence', 0.0):.2f}")
+
+    print("[3/4] Generating step charts...")
 
     charts = StepGenerator.generate_all_difficulties(
         audio_data,
@@ -71,10 +69,8 @@ def generate_charts(audio_path, title_override=None, artist_override=None, verbo
     )
 
     if verbose:
-        for chart in charts:
-            diff = chart['difficulty']['description']
-            steps = len(chart['notes'])
-            print(f"   {diff.capitalize()}: {steps} steps")
+        steps_info = ", ".join(f"{c['difficulty']['description']}: {len(c['notes'])}" for c in charts)
+        print(f"      {steps_info}")
 
     return charts
 
@@ -93,24 +89,21 @@ def process_audio(audio_path, output_dir, title, artist, verbose):
         safe_name = sanitize_filename(audio_path.stem)
         ssc_path = chart_temp_dir / f"{safe_name}.ssc"
 
-        if verbose:
-            print("Exporting chart...")
-
         exporter = SSCExporter()
         exporter.export_charts(charts, ssc_path)
 
         # Create package and zip
-        if verbose:
-            print("Creating package...")
+        print("[4/4] Creating package...")
 
         package_dir, package_files = create_song_package(
             audio_file=audio_path,
             chart_file=ssc_path,
             output_dir=output_dir,
-            include_banner=True
+            include_banner=True,
+            quiet=True
         )
 
-        zip_path = create_zip_package(package_dir, package_files)
+        zip_path = create_zip_package(package_dir, package_files, quiet=True)
 
         # Clean up the package directory (we only want the zip)
         shutil.rmtree(package_dir)
@@ -141,10 +134,7 @@ def main(input_path, url, output, title, artist, verbose):
 
     try:
         if url:
-            if verbose:
-                print(f"Downloading from YouTube...")
-
-            # Download to temp dir - auto cleaned up after
+            print("[1/4] Downloading from YouTube...")
             with tempfile.TemporaryDirectory() as temp_dir:
                 audio_path = download_youtube_audio(url, temp_dir)
                 if not audio_path:
@@ -152,7 +142,7 @@ def main(input_path, url, output, title, artist, verbose):
                     sys.exit(1)
 
                 if verbose:
-                    print(f"   Downloaded: {audio_path.name}")
+                    print(f"      Downloaded: {audio_path.name}")
 
                 zip_path = process_audio(audio_path, output_dir, title, artist, verbose)
         else:
@@ -161,13 +151,11 @@ def main(input_path, url, output, title, artist, verbose):
                 print(f"Error: File not found: {input_path}", file=sys.stderr)
                 sys.exit(1)
 
-            if verbose:
-                print(f"Processing: {audio_path.name}")
-
+            print(f"[1/4] Loading: {audio_path.name}")
             zip_path = process_audio(audio_path, output_dir, title, artist, verbose)
 
-        print(f"\nCreated: {zip_path}")
-        print(f"\nTo use: Extract to your StepMania/Songs folder and refresh (F5)")
+        print(f"\nDone! Created: {zip_path}")
+        print(f"Extract to StepMania/Songs folder and refresh (F5) to play")
 
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)

@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual environment
+venv/
+
+# Generated directories
+downloads/
+stepmania_packages/
+youtube_charts/

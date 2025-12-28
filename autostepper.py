@@ -1,116 +1,178 @@
 #!/usr/bin/env python3
 """
-AutoStepper MVP - Generate StepMania/ITGMania charts from audio files
+AutoStepper - Generate StepMania/ITGMania charts from audio
 
-Python conversion of the original Java AutoStepper with superior beat detection
-using librosa and modern Music Information Retrieval techniques.
+Accepts either a YouTube URL or local audio file and produces a
+ready-to-distribute .zip package with all difficulties.
 
-Original concept and Java implementation by phr00t:
-https://github.com/phr00t/AutoStepper
+Original concept by phr00t: https://github.com/phr00t/AutoStepper
 """
 
 import click
 import sys
+import subprocess
+import tempfile
+import shutil
 from pathlib import Path
 import traceback
 
 from autostepper.audio.analyzer import BeatAnalyzer
 from autostepper.stepgen.generator import StepGenerator
 from autostepper.formats.stepmania_ssc import SSCExporter
+from package_song import create_song_package, create_zip_package, sanitize_filename
 
 
-def sanitize_filename(name: str) -> str:
-    """Sanitize filename by trimming spaces and replacing invalid characters"""
-    # Strip leading/trailing whitespace
-    name = name.strip()
-    # Replace problematic characters
-    for char in ['/', '\\', ':', '*', '?', '"', '<', '>', '|']:
-        name = name.replace(char, '_')
-    # Replace spaces with underscores
-    name = name.replace(' ', '_')
-    # Remove any double underscores
-    while '__' in name:
-        name = name.replace('__', '_')
-    return name
+def download_youtube_audio(youtube_url, output_dir):
+    """Download audio from YouTube, returns path to downloaded file"""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    cmd = [
+        "yt-dlp",
+        "-x",
+        "--audio-format", "mp3",
+        "--audio-quality", "0",
+        "-o", str(output_dir / "%(title)s.%(ext)s"),
+        youtube_url
+    ]
+
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        audio_files = list(output_dir.glob("*.mp3"))
+        if audio_files:
+            return max(audio_files, key=lambda f: f.stat().st_mtime)
+        return None
+    except subprocess.CalledProcessError as e:
+        print(f"YouTube download failed: {e.stderr}", file=sys.stderr)
+        return None
+    except FileNotFoundError:
+        print("Error: yt-dlp not found. Install with: pip install yt-dlp", file=sys.stderr)
+        return None
+
+
+def generate_charts(audio_path, title_override=None, artist_override=None, verbose=False):
+    """Analyze audio and generate step charts for all difficulties"""
+    if verbose:
+        print("Analyzing audio...")
+
+    analyzer = BeatAnalyzer()
+    audio_data = analyzer.load_and_analyze(audio_path)
+
+    if verbose:
+        print(f"   BPM: {audio_data['tempo']:.1f}")
+        print(f"   Beats: {len(audio_data['beats'])}")
+        print(f"   Confidence: {audio_data.get('confidence', 0.0):.2f}")
+        print("Generating step patterns...")
+
+    charts = StepGenerator.generate_all_difficulties(
+        audio_data,
+        title_override=title_override,
+        artist_override=artist_override
+    )
+
+    if verbose:
+        for chart in charts:
+            diff = chart['difficulty']['description']
+            steps = len(chart['notes'])
+            print(f"   {diff.capitalize()}: {steps} steps")
+
+    return charts
+
+
+def process_audio(audio_path, output_dir, title, artist, verbose):
+    """Process audio file and create distribution zip"""
+
+    # Generate charts
+    charts = generate_charts(audio_path, title, artist, verbose)
+
+    # Create temp directory for intermediate .ssc file
+    with tempfile.TemporaryDirectory() as chart_temp_dir:
+        chart_temp_dir = Path(chart_temp_dir)
+
+        # Export .ssc to temp location
+        safe_name = sanitize_filename(audio_path.stem)
+        ssc_path = chart_temp_dir / f"{safe_name}.ssc"
+
+        if verbose:
+            print("Exporting chart...")
+
+        exporter = SSCExporter()
+        exporter.export_charts(charts, ssc_path)
+
+        # Create package and zip
+        if verbose:
+            print("Creating package...")
+
+        package_dir, package_files = create_song_package(
+            audio_file=audio_path,
+            chart_file=ssc_path,
+            output_dir=output_dir,
+            include_banner=True
+        )
+
+        zip_path = create_zip_package(package_dir, package_files)
+
+        # Clean up the package directory (we only want the zip)
+        shutil.rmtree(package_dir)
+
+        return zip_path
 
 
 @click.command()
-@click.option('--input', '-i', required=True,
-              help='Input audio file (MP3, WAV, FLAC, etc.)')
-@click.option('--output', '-o', default='./output',
-              help='Output directory for .ssc file')
+@click.option('--input', '-i', 'input_path', help='Local audio file (MP3, WAV, FLAC, etc.)')
+@click.option('--url', '-u', help='YouTube video URL')
+@click.option('--output', '-o', default='./stepmania_packages', help='Output directory for .zip')
 @click.option('--title', help='Override song title')
 @click.option('--artist', help='Override artist name')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-def main(input, output, title, artist, verbose):
-    """AutoStepper MVP: Generate StepMania/ITGMania charts from audio files using advanced beat detection"""
+def main(input_path, url, output, title, artist, verbose):
+    """Generate StepMania/ITGMania chart package from audio or YouTube URL"""
 
-    input_path = Path(input)
-    output_path = Path(output)
-
-    if not input_path.exists():
-        click.echo(f"Error: Input file '{input}' not found", err=True)
+    if not input_path and not url:
+        click.echo("Error: Provide either --input (audio file) or --url (YouTube URL)", err=True)
         sys.exit(1)
 
-    # Create output directory
-    output_path.mkdir(parents=True, exist_ok=True)
+    if input_path and url:
+        click.echo("Error: Provide only one of --input or --url, not both", err=True)
+        sys.exit(1)
 
-    if verbose:
-        click.echo(f"Processing: {input_path.name}")
-        click.echo(f"Output: {output_path}")
+    output_dir = Path(output)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        # Step 1: Analyze audio for beats and tempo
-        if verbose:
-            click.echo("Analyzing audio and detecting beats...")
+        if url:
+            if verbose:
+                print(f"Downloading from YouTube...")
 
-        analyzer = BeatAnalyzer()
-        audio_data = analyzer.load_and_analyze(input_path)
+            # Download to temp dir - auto cleaned up after
+            with tempfile.TemporaryDirectory() as temp_dir:
+                audio_path = download_youtube_audio(url, temp_dir)
+                if not audio_path:
+                    print("Failed to download audio from YouTube")
+                    sys.exit(1)
 
-        if verbose:
-            tempo = audio_data['tempo']
-            beat_count = len(audio_data['beats'])
-            confidence = audio_data.get('confidence', 0.0)
-            click.echo(f"   Detected BPM: {tempo:.1f}")
-            click.echo(f"   Found {beat_count} beats")
-            click.echo(f"   Confidence: {confidence:.2f}")
+                if verbose:
+                    print(f"   Downloaded: {audio_path.name}")
 
-        # Step 2: Generate step patterns for all difficulties
-        if verbose:
-            click.echo("Generating step patterns for all difficulties...")
+                zip_path = process_audio(audio_path, output_dir, title, artist, verbose)
+        else:
+            audio_path = Path(input_path)
+            if not audio_path.exists():
+                print(f"Error: File not found: {input_path}", file=sys.stderr)
+                sys.exit(1)
 
-        charts = StepGenerator.generate_all_difficulties(
-            audio_data,
-            title_override=title,
-            artist_override=artist
-        )
+            if verbose:
+                print(f"Processing: {audio_path.name}")
 
-        if verbose:
-            for chart in charts:
-                diff_name = chart['difficulty']['description']
-                step_count = len(chart['notes'])
-                click.echo(f"   {diff_name.capitalize()}: {step_count} steps")
+            zip_path = process_audio(audio_path, output_dir, title, artist, verbose)
 
-        # Step 3: Export to SSC format (all difficulties in one file)
-        safe_filename = sanitize_filename(input_path.stem)
-        output_file = output_path / f"{safe_filename}.ssc"
-
-        if verbose:
-            click.echo(f"Exporting to {output_file.name}...")
-
-        exporter = SSCExporter()
-        exporter.export_charts(charts, output_file)
-
-        click.echo(f"Successfully created: {output_file}")
-        click.echo(f"BPM: {audio_data['tempo']:.1f} | Difficulties: {len(charts)}")
-
-        total_steps = sum(len(chart['notes']) for chart in charts)
-        click.echo(f"Total steps generated: {total_steps}")
+        print(f"\nCreated: {zip_path}")
+        print(f"\nTo use: Extract to your StepMania/Songs folder and refresh (F5)")
 
     except Exception as e:
-        click.echo(f"Error processing {input_path.name}: {str(e)}", err=True)
+        print(f"Error: {e}", file=sys.stderr)
         if verbose:
-            click.echo(traceback.format_exc(), err=True)
+            traceback.print_exc()
         sys.exit(1)
 
 

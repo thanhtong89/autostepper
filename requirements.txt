@@ -11,3 +11,6 @@ scipy>=1.7.0            # Scientific computing support
 
 # YouTube audio downloading (optional)
 yt-dlp>=2023.1.6        # Best YouTube downloader (youtube-dl successor)
+
+# Song packaging (optional)
+Pillow>=9.0.0           # Image generation for banners

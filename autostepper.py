@@ -2,8 +2,11 @@
 """
 AutoStepper MVP - Generate StepMania charts from audio files
 
-Python conversion of the Java AutoStepper with superior beat detection
+Python conversion of the original Java AutoStepper with superior beat detection
 using librosa and modern Music Information Retrieval techniques.
+
+Original concept and Java implementation by phr00t:
+https://github.com/phr00t/AutoStepper
 """
 
 import click

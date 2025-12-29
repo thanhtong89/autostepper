@@ -5,11 +5,12 @@
 
   interface Props {
     song: Song;
+    focused?: boolean;
     onDelete?: () => void;
     onExport?: () => void;
   }
 
-  let { song, onDelete, onExport }: Props = $props();
+  let { song, focused = false, onDelete, onExport }: Props = $props();
 
   let exporting = $state(false);
 
@@ -56,7 +57,8 @@
   };
 </script>
 
-<div class="card-hover group relative overflow-hidden">
+<div class="group relative overflow-hidden transition-all duration-150
+            {focused ? 'card-nav-focused' : 'card-hover'}">
   <!-- Thumbnail -->
   <div class="aspect-video bg-game-border rounded-lg overflow-hidden mb-3 relative">
     {#if getThumbnail()}
@@ -118,8 +120,9 @@
     </p>
   {/if}
 
-  <!-- Action buttons (shown on hover) -->
-  <div class="absolute top-2 left-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+  <!-- Action buttons (shown on hover or focus) -->
+  <div class="absolute top-2 left-2 flex gap-1 transition-opacity
+              {focused ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}">
     {#if song.status === 'ready'}
       <button
         onclick={(e) => { e.preventDefault(); e.stopPropagation(); handleExport(); }}

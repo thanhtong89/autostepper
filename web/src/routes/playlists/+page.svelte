@@ -1,7 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
   import { getPlaylists, createPlaylist, deletePlaylist, type Playlist } from '$lib/storage/playlists';
   import { getSongs, type Song } from '$lib/storage/library';
+  import { createKeyboardHandler } from '$lib/navigation/keyboard';
+  import { navigateList, navigateHorizontal, scrollItemIntoView } from '$lib/navigation/focus';
+  import type { NavigationAction } from '$lib/navigation/types';
 
   let playlists = $state<Playlist[]>([]);
   let songs = $state<Song[]>([]);
@@ -9,6 +13,13 @@
   let showCreateModal = $state(false);
   let newPlaylistName = $state('');
   let deleteConfirmId = $state<number | null>(null);
+
+  // Navigation state
+  type Zone = 'action' | 'list';
+  let activeZone = $state<Zone>('action');
+  let playlistFocusIndex = $state(0);
+  let actionFocusIndex = $state(0); // 0=Play, 1=Delete
+  let playlistElements: HTMLElement[] = [];
 
   async function loadData() {
     try {
@@ -54,7 +65,76 @@
   function formatDate(isoString: string): string {
     return new Date(isoString).toLocaleDateString();
   }
+
+  function handleNavigation(action: NavigationAction) {
+    // Don't navigate when modal is open
+    if (showCreateModal || deleteConfirmId !== null) {
+      if (action === 'back') {
+        showCreateModal = false;
+        deleteConfirmId = null;
+      }
+      return;
+    }
+
+    if (loading) return;
+
+    if (action === 'back') {
+      goto('/');
+      return;
+    }
+
+    if (action === 'select') {
+      handleSelect();
+      return;
+    }
+
+    if (activeZone === 'action') {
+      // On the "New Playlist" button
+      if (action === 'down' && playlists.length > 0) {
+        activeZone = 'list';
+        playlistFocusIndex = 0;
+        actionFocusIndex = 0;
+      }
+    } else {
+      // In the playlist list
+      if (action === 'up' || action === 'down') {
+        const result = navigateList(playlistFocusIndex, action, playlists.length);
+        if (result.escaped === 'up') {
+          activeZone = 'action';
+        } else {
+          playlistFocusIndex = result.index;
+          actionFocusIndex = 0; // Reset to Play button
+          scrollItemIntoView(playlistElements[playlistFocusIndex]);
+        }
+      } else if (action === 'left' || action === 'right') {
+        // Navigate between Play and Delete buttons
+        const result = navigateHorizontal(actionFocusIndex, action, 2);
+        actionFocusIndex = result.index;
+      }
+    }
+  }
+
+  function handleSelect() {
+    if (activeZone === 'action') {
+      showCreateModal = true;
+    } else {
+      const playlist = playlists[playlistFocusIndex];
+      if (!playlist?.id) return;
+
+      if (actionFocusIndex === 0) {
+        // Play button
+        goto(`/play?playlist=${playlist.id}`);
+      } else {
+        // Delete button
+        deleteConfirmId = playlist.id;
+      }
+    }
+  }
+
+  const keyHandler = createKeyboardHandler(handleNavigation);
 </script>
+
+<svelte:window onkeydown={keyHandler} />
 
 <svelte:head>
   <title>Playlists - AutoStepper</title>
@@ -71,7 +151,8 @@
     </div>
     <button
       onclick={() => showCreateModal = true}
-      class="btn-primary btn-lg flex items-center gap-2"
+      class="btn-primary btn-lg flex items-center gap-2 transition-all
+             {activeZone === 'action' ? 'nav-focused-pulse' : ''}"
     >
       <span>+</span>
       <span>New Playlist</span>
@@ -101,8 +182,14 @@
   {:else}
     <!-- Playlist list -->
     <div class="space-y-4">
-      {#each playlists as playlist (playlist.id)}
-        <div class="card-hover flex items-center justify-between">
+      {#each playlists as playlist, i (playlist.id)}
+        <div
+          bind:this={playlistElements[i]}
+          class="flex items-center justify-between transition-all
+                 {activeZone === 'list' && playlistFocusIndex === i
+                   ? 'card-nav-focused'
+                   : 'card-hover'}"
+        >
           <div class="flex-1">
             <h3 class="font-semibold text-lg">{playlist.name}</h3>
             <p class="text-gray-400 text-sm">
@@ -113,13 +200,19 @@
           <div class="flex items-center gap-2">
             <a
               href="/play?playlist={playlist.id}"
-              class="btn-primary"
+              class="btn-primary transition-all
+                     {activeZone === 'list' && playlistFocusIndex === i && actionFocusIndex === 0
+                       ? 'nav-focused'
+                       : ''}"
             >
               Play
             </a>
             <button
               onclick={() => deleteConfirmId = playlist.id ?? null}
-              class="btn-secondary text-game-error hover:text-game-error"
+              class="btn-secondary text-game-error hover:text-game-error transition-all
+                     {activeZone === 'list' && playlistFocusIndex === i && actionFocusIndex === 1
+                       ? 'nav-focused'
+                       : ''}"
             >
               Delete
             </button>

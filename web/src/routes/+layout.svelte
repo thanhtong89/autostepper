@@ -1,8 +1,12 @@
 <script lang="ts">
   import '../app.css';
   import { page } from '$app/stores';
+  import { createNavigationContext } from '$lib/navigation/context.svelte';
 
   let { children } = $props();
+
+  // Initialize navigation context for the entire app
+  const navContext = createNavigationContext();
 
   // Navigation items
   const navItems = [

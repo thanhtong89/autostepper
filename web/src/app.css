@@ -80,6 +80,51 @@ body {
   box-shadow: 0 0 0 2px var(--color-game-bg), 0 0 0 4px var(--color-game-accent);
 }
 
+/* Navigation focus - enhanced for rhythm game aesthetic */
+.nav-focused {
+  outline: none;
+  box-shadow:
+    0 0 0 3px var(--color-game-bg),
+    0 0 0 6px var(--color-game-accent),
+    0 0 20px rgba(99, 102, 241, 0.4);
+  transform: scale(1.02);
+  z-index: 10;
+  position: relative;
+}
+
+/* Pulsing focus animation for active selection */
+.nav-focused-pulse {
+  animation: nav-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes nav-pulse {
+  0%, 100% {
+    box-shadow:
+      0 0 0 3px var(--color-game-bg),
+      0 0 0 6px var(--color-game-accent),
+      0 0 20px rgba(99, 102, 241, 0.4);
+  }
+  50% {
+    box-shadow:
+      0 0 0 3px var(--color-game-bg),
+      0 0 0 8px var(--color-game-accent),
+      0 0 30px rgba(99, 102, 241, 0.6);
+  }
+}
+
+/* Card with navigation focus */
+.card-nav-focused {
+  background-color: var(--color-game-panel);
+  border: 2px solid var(--color-game-accent);
+  border-radius: 0.75rem;
+  padding: 1rem;
+  box-shadow:
+    0 0 0 2px var(--color-game-bg),
+    0 0 20px rgba(99, 102, 241, 0.3);
+  transform: scale(1.02);
+  transition: all 0.15s ease-out;
+}
+
 /* Button base styles */
 .btn {
   padding: 0.5rem 1rem;

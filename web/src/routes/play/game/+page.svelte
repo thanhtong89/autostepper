@@ -6,6 +6,8 @@
   import { GameEngine, type GameState } from '$lib/game/engine';
   import type { GameScore, Judgment } from '$lib/game/scoring';
   import type { Song, ChartData } from '$lib/storage/db';
+  import { navigateList } from '$lib/navigation/focus';
+  import { KEY_MAP, type NavigationAction } from '$lib/navigation/types';
 
   // State
   let song = $state<Song | null>(null);
@@ -15,6 +17,10 @@
 
   // Game state
   let gameState = $state<GameState>('idle');
+
+  // Menu navigation state
+  let pauseMenuIndex = $state(0);  // 0=Resume, 1=Restart, 2=Quit
+  let resultsMenuIndex = $state(0); // 0=Play Again, 1=Return
   let currentScore = $state<GameScore | null>(null);
   let finalResults = $state<{
     score: number;
@@ -148,12 +154,76 @@
   }
 
   function handleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') {
-      if (gameState === 'playing') {
+    // During gameplay, only handle Escape for pause
+    if (gameState === 'playing') {
+      if (e.key === 'Escape') {
         engine?.pause();
-      } else if (gameState === 'paused') {
-        engine?.resume();
+        pauseMenuIndex = 0; // Reset to Resume
       }
+      return;
+    }
+
+    // Menu navigation when paused or finished
+    if (gameState === 'paused' || gameState === 'finished') {
+      const action = KEY_MAP[e.key] as NavigationAction | undefined;
+      if (!action) return;
+
+      e.preventDefault();
+
+      if (gameState === 'paused') {
+        handlePauseMenuNavigation(action);
+      } else {
+        handleResultsMenuNavigation(action);
+      }
+    }
+  }
+
+  function handlePauseMenuNavigation(action: NavigationAction) {
+    if (action === 'up' || action === 'down') {
+      const result = navigateList(pauseMenuIndex, action, 3);
+      pauseMenuIndex = result.index;
+    } else if (action === 'select') {
+      executePauseMenuAction();
+    } else if (action === 'back') {
+      // Resume on Escape
+      engine?.resume();
+    }
+  }
+
+  function executePauseMenuAction() {
+    switch (pauseMenuIndex) {
+      case 0: // Resume
+        engine?.resume();
+        break;
+      case 1: // Restart
+        restartGame();
+        break;
+      case 2: // Quit
+        returnToMenu();
+        break;
+    }
+  }
+
+  function handleResultsMenuNavigation(action: NavigationAction) {
+    if (action === 'up' || action === 'down') {
+      const result = navigateList(resultsMenuIndex, action, 2);
+      resultsMenuIndex = result.index;
+    } else if (action === 'select') {
+      executeResultsMenuAction();
+    } else if (action === 'back') {
+      // Return to menu on Escape
+      returnToMenu();
+    }
+  }
+
+  function executeResultsMenuAction() {
+    switch (resultsMenuIndex) {
+      case 0: // Play Again
+        restartGame();
+        break;
+      case 1: // Return to Menu
+        returnToMenu();
+        break;
     }
   }
 
@@ -222,7 +292,7 @@
         ></canvas>
 
         <!-- Score overlay (top left) -->
-        {#if currentScore && gameState === 'playing'}
+        {#if currentScore && (gameState === 'playing' || gameState === 'leadin')}
           <div class="absolute top-4 left-4 text-white">
             <div class="text-3xl font-bold">{currentScore.score.toLocaleString()}</div>
             <div class="text-sm text-gray-400">
@@ -232,10 +302,17 @@
         {/if}
 
         <!-- Song info (top right) -->
-        {#if song && gameState === 'playing'}
+        {#if song && (gameState === 'playing' || gameState === 'leadin')}
           <div class="absolute top-4 right-4 text-right">
             <div class="font-medium">{song.title}</div>
             <div class="text-sm text-gray-400 capitalize">{difficulty}</div>
+          </div>
+        {/if}
+
+        <!-- Get Ready indicator during lead-in -->
+        {#if gameState === 'leadin'}
+          <div class="absolute top-1/3 left-1/2 -translate-x-1/2 text-center">
+            <div class="text-2xl font-bold text-game-accent animate-pulse">Get Ready!</div>
           </div>
         {/if}
       </div>
@@ -250,17 +327,29 @@
         <div class="card p-8 text-center">
           <h2 class="text-3xl font-bold mb-6">PAUSED</h2>
           <div class="space-y-3">
-            <button onclick={resumeGame} class="btn btn-primary btn-lg w-full">
+            <button
+              onclick={resumeGame}
+              class="btn btn-primary btn-lg w-full transition-all
+                     {pauseMenuIndex === 0 ? 'nav-focused-pulse' : ''}"
+            >
               Resume
             </button>
-            <button onclick={restartGame} class="btn btn-secondary btn-lg w-full">
+            <button
+              onclick={restartGame}
+              class="btn btn-secondary btn-lg w-full transition-all
+                     {pauseMenuIndex === 1 ? 'nav-focused' : ''}"
+            >
               Restart
             </button>
-            <button onclick={returnToMenu} class="btn btn-danger btn-lg w-full">
+            <button
+              onclick={returnToMenu}
+              class="btn btn-danger btn-lg w-full transition-all
+                     {pauseMenuIndex === 2 ? 'nav-focused' : ''}"
+            >
               Quit
             </button>
           </div>
-          <p class="text-sm text-gray-500 mt-4">Press ESC to resume</p>
+          <p class="text-sm text-gray-500 mt-4">Use ↑↓ to navigate, Enter to select</p>
         </div>
       </div>
     {/if}
@@ -335,13 +424,22 @@
 
           <!-- Actions -->
           <div class="space-y-3">
-            <button onclick={restartGame} class="btn btn-primary btn-lg w-full">
+            <button
+              onclick={restartGame}
+              class="btn btn-primary btn-lg w-full transition-all
+                     {resultsMenuIndex === 0 ? 'nav-focused-pulse' : ''}"
+            >
               Play Again
             </button>
-            <button onclick={returnToMenu} class="btn btn-secondary btn-lg w-full">
+            <button
+              onclick={returnToMenu}
+              class="btn btn-secondary btn-lg w-full transition-all
+                     {resultsMenuIndex === 1 ? 'nav-focused' : ''}"
+            >
               Return to Menu
             </button>
           </div>
+          <p class="text-sm text-gray-500 mt-4">Use ↑↓ to navigate, Enter to select</p>
         </div>
       </div>
     {/if}

@@ -16,11 +16,11 @@ import {
 } from './scoring';
 import { GameRenderer, type RenderState, type RendererConfig } from './renderer';
 
-export type GameState = 'idle' | 'countdown' | 'playing' | 'paused' | 'finished';
+export type GameState = 'idle' | 'leadin' | 'playing' | 'paused' | 'finished';
 
 export interface GameConfig {
   // Timing
-  countdownDuration: number;   // Seconds before song starts
+  leadInDuration: number;      // Seconds to show notes scrolling before music
   audioOffset: number;         // Audio sync adjustment (ms)
 
   // Gameplay
@@ -31,7 +31,7 @@ export interface GameConfig {
 }
 
 const DEFAULT_CONFIG: GameConfig = {
-  countdownDuration: 3,
+  leadInDuration: 2,           // 2 second lead-in for reaction time
   audioOffset: 0,
   scrollSpeed: 1
 };
@@ -65,7 +65,7 @@ export class GameEngine {
   // Timing - high precision interpolation
   private startTime: number = 0;
   private pauseTime: number = 0;
-  private countdownRemaining: number = 0;
+  private leadInTime: number = 0;  // Virtual time during lead-in (negative to 0)
 
   // Smooth timing: interpolate between audio.currentTime updates
   private lastAudioTime: number = 0;
@@ -123,15 +123,15 @@ export class GameEngine {
   }
 
   /**
-   * Start the game (begins countdown)
+   * Start the game (begins lead-in)
    */
   start(): void {
     if (this.state !== 'idle') return;
 
     initInput();
-    this.setState('countdown');
-    this.countdownRemaining = this.config.countdownDuration;
     this.startTime = performance.now();
+    this.leadInTime = -this.config.leadInDuration;
+    this.setState('leadin');
 
     // Start game loop
     this.animationFrame = requestAnimationFrame(this.gameLoop);
@@ -201,8 +201,8 @@ export class GameEngine {
   private gameLoop(): void {
     const now = performance.now();
 
-    if (this.state === 'countdown') {
-      this.updateCountdown(now);
+    if (this.state === 'leadin') {
+      this.updateLeadIn(now);
     } else if (this.state === 'playing') {
       this.updatePlaying(now);
     } else if (this.state === 'paused') {
@@ -215,12 +215,13 @@ export class GameEngine {
     }
   }
 
-  private updateCountdown(now: number): void {
+  private updateLeadIn(now: number): void {
+    // Calculate virtual time during lead-in (starts negative, counts up to 0)
     const elapsed = (now - this.startTime) / 1000;
-    this.countdownRemaining = this.config.countdownDuration - elapsed;
+    this.leadInTime = -this.config.leadInDuration + elapsed;
 
-    if (this.countdownRemaining <= 0) {
-      // Start playing
+    if (this.leadInTime >= 0) {
+      // Lead-in complete, start music
       this.audio.currentTime = 0;
       this.audio.play();
       this.startTime = now;
@@ -231,9 +232,11 @@ export class GameEngine {
       this.smoothTime = 0;
 
       this.setState('playing');
+    } else {
+      // Still in lead-in - render notes scrolling with virtual time
+      this.updateRenderState(this.leadInTime);
+      this.render();
     }
-
-    this.render();
   }
 
   private updatePlaying(now: number): void {
@@ -440,27 +443,9 @@ export class GameEngine {
   }
 
   private render(): void {
-    if (this.state === 'countdown') {
-      // Draw countdown - use renderer's logical dimensions for consistency
-      const dpr = window.devicePixelRatio || 1;
-      const ctx = this.canvas.getContext('2d')!;
-      const width = this.canvas.width / dpr;
-      const height = this.canvas.height / dpr;
-
-      ctx.fillStyle = '#0a0a0f';
-      ctx.fillRect(0, 0, width, height);
-
-      ctx.font = 'bold 72px Inter, system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillStyle = '#ffffff';
-
-      const count = Math.ceil(this.countdownRemaining);
-      if (count > 0) {
-        ctx.fillText(count.toString(), width / 2, height / 2);
-      } else {
-        ctx.fillText('GO!', width / 2, height / 2);
-      }
+    if (this.state === 'leadin') {
+      // Render game with lead-in time (notes scrolling before music)
+      this.renderer.render(this.renderState, this.leadInTime);
     } else {
       // Normal game render
       const currentTime = this.audio.currentTime + (this.config.audioOffset / 1000);

@@ -1,11 +1,23 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
   import { getSongs } from '$lib/storage/library';
   import { getPlaylists } from '$lib/storage/playlists';
+  import { createKeyboardHandler } from '$lib/navigation/keyboard';
+  import { navigateHorizontal } from '$lib/navigation/focus';
+  import type { NavigationAction } from '$lib/navigation/types';
 
   let songCount = $state(0);
   let playlistCount = $state(0);
   let loading = $state(true);
+
+  // Navigation state
+  let focusedIndex = $state(0);
+  const menuItems = [
+    { href: '/library', label: 'Song Library' },
+    { href: '/playlists', label: 'Playlists' },
+    { href: '/play', label: 'Play Now' }
+  ];
 
   onMount(async () => {
     try {
@@ -18,7 +30,28 @@
     }
     loading = false;
   });
+
+  function handleNavigation(action: NavigationAction) {
+    if (action === 'select') {
+      // Navigate to the focused page
+      goto(menuItems[focusedIndex].href);
+      return;
+    }
+
+    if (action === 'back') {
+      // Already at home, no action
+      return;
+    }
+
+    // Handle directional navigation
+    const result = navigateHorizontal(focusedIndex, action, menuItems.length, { wrap: true });
+    focusedIndex = result.index;
+  }
+
+  const keyHandler = createKeyboardHandler(handleNavigation);
 </script>
+
+<svelte:window onkeydown={keyHandler} />
 
 <svelte:head>
   <title>AutoStepper - Dance Game</title>
@@ -43,9 +76,14 @@
   <!-- Main Actions -->
   <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
     <!-- Song Library -->
-    <a href="/library" class="card-hover group">
+    <a
+      href="/library"
+      class="group transition-all duration-150
+             {focusedIndex === 0 ? 'card-nav-focused' : 'card-hover'}"
+    >
       <div class="text-4xl mb-3">🎵</div>
-      <h2 class="text-xl font-semibold mb-2 group-hover:text-game-accent transition-colors">
+      <h2 class="text-xl font-semibold mb-2 group-hover:text-game-accent transition-colors
+                 {focusedIndex === 0 ? 'text-game-accent' : ''}">
         Song Library
       </h2>
       <p class="text-gray-400 text-sm mb-3">
@@ -61,9 +99,14 @@
     </a>
 
     <!-- Playlists -->
-    <a href="/playlists" class="card-hover group">
+    <a
+      href="/playlists"
+      class="group transition-all duration-150
+             {focusedIndex === 1 ? 'card-nav-focused' : 'card-hover'}"
+    >
       <div class="text-4xl mb-3">📋</div>
-      <h2 class="text-xl font-semibold mb-2 group-hover:text-game-accent transition-colors">
+      <h2 class="text-xl font-semibold mb-2 group-hover:text-game-accent transition-colors
+                 {focusedIndex === 1 ? 'text-game-accent' : ''}">
         Playlists
       </h2>
       <p class="text-gray-400 text-sm mb-3">
@@ -79,9 +122,14 @@
     </a>
 
     <!-- Play -->
-    <a href="/play" class="card-hover group">
+    <a
+      href="/play"
+      class="group transition-all duration-150
+             {focusedIndex === 2 ? 'card-nav-focused' : 'card-hover'}"
+    >
       <div class="text-4xl mb-3">🎮</div>
-      <h2 class="text-xl font-semibold mb-2 group-hover:text-game-accent transition-colors">
+      <h2 class="text-xl font-semibold mb-2 group-hover:text-game-accent transition-colors
+                 {focusedIndex === 2 ? 'text-game-accent' : ''}">
         Play Now
       </h2>
       <p class="text-gray-400 text-sm mb-3">

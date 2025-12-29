@@ -14,3 +14,7 @@ yt-dlp>=2023.1.6        # Best YouTube downloader (youtube-dl successor)
 
 # Song packaging (optional)
 Pillow>=9.0.0           # Image generation for banners
+
+# Local web development server (optional)
+flask>=3.0.0            # Web server for local YouTube downloads
+flask-cors>=4.0.0       # CORS support for browser requests

@@ -1,0 +1,253 @@
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import { getSongs, deleteSong, type Song } from '$lib/storage/library';
+  import { importFromZip, type ImportResult } from '$lib/formats/zip';
+  import AddSongModal from '$lib/components/AddSongModal.svelte';
+  import SongCard from '$lib/components/SongCard.svelte';
+
+  let songs = $state<Song[]>([]);
+  let loading = $state(true);
+  let showAddModal = $state(false);
+  let deleteConfirmId = $state<number | null>(null);
+
+  // Import state
+  let importing = $state(false);
+  let importProgress = $state('');
+  let importResult = $state<ImportResult | null>(null);
+  let fileInput: HTMLInputElement;
+
+  async function loadSongs() {
+    try {
+      songs = await getSongs();
+    } catch (e) {
+      console.error('Failed to load songs:', e);
+    }
+    loading = false;
+  }
+
+  onMount(loadSongs);
+
+  async function handleSongAdded() {
+    showAddModal = false;
+    await loadSongs();
+  }
+
+  async function handleDelete(id: number) {
+    try {
+      await deleteSong(id);
+      songs = songs.filter(s => s.id !== id);
+      deleteConfirmId = null;
+    } catch (e) {
+      console.error('Failed to delete song:', e);
+    }
+  }
+
+  function formatDuration(seconds: number): string {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  }
+
+  function triggerImport() {
+    fileInput?.click();
+  }
+
+  async function handleFileSelect(e: Event) {
+    const target = e.target as HTMLInputElement;
+    const file = target.files?.[0];
+    if (!file) return;
+
+    importing = true;
+    importProgress = '';
+    importResult = null;
+
+    try {
+      const result = await importFromZip(file, (msg) => {
+        importProgress = msg;
+      });
+      importResult = result;
+
+      if (result.songsImported > 0) {
+        await loadSongs();
+      }
+    } catch (e) {
+      importResult = {
+        success: false,
+        songsImported: 0,
+        errors: [e instanceof Error ? e.message : 'Unknown error'],
+        songs: []
+      };
+    } finally {
+      importing = false;
+      // Reset file input
+      target.value = '';
+    }
+  }
+</script>
+
+<svelte:head>
+  <title>Song Library - AutoStepper</title>
+</svelte:head>
+
+<div class="max-w-6xl mx-auto px-4 py-8">
+  <!-- Hidden file input for import -->
+  <input
+    type="file"
+    accept=".zip"
+    bind:this={fileInput}
+    onchange={handleFileSelect}
+    class="hidden"
+  />
+
+  <!-- Header -->
+  <div class="flex items-center justify-between mb-8">
+    <div>
+      <h1 class="text-3xl font-bold">Song Library</h1>
+      <p class="text-gray-400 mt-1">
+        {songs.length} {songs.length === 1 ? 'song' : 'songs'} in your library
+      </p>
+    </div>
+    <div class="flex gap-3">
+      <button
+        onclick={triggerImport}
+        disabled={importing}
+        class="btn-secondary btn-lg flex items-center gap-2"
+        title="Import StepMania songs (.zip with .ssc/.sm files)"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clip-rule="evenodd" />
+        </svg>
+        <span>{importing ? 'Importing...' : 'Import'}</span>
+      </button>
+      <button
+        onclick={() => showAddModal = true}
+        class="btn-primary btn-lg flex items-center gap-2"
+      >
+        <span>+</span>
+        <span>Add Song</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Content -->
+  {#if loading}
+    <div class="flex items-center justify-center py-20">
+      <div class="text-gray-400">Loading...</div>
+    </div>
+  {:else if songs.length === 0}
+    <!-- Empty state -->
+    <div class="card text-center py-16">
+      <div class="text-6xl mb-4">🎵</div>
+      <h2 class="text-xl font-semibold mb-2">No songs yet</h2>
+      <p class="text-gray-400 mb-6">
+        Add your first song from YouTube to get started
+      </p>
+      <button
+        onclick={() => showAddModal = true}
+        class="btn-primary"
+      >
+        Add Your First Song
+      </button>
+    </div>
+  {:else}
+    <!-- Song grid -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+      {#each songs as song (song.id)}
+        <SongCard
+          {song}
+          onDelete={() => deleteConfirmId = song.id ?? null}
+        />
+      {/each}
+    </div>
+  {/if}
+</div>
+
+<!-- Add Song Modal -->
+{#if showAddModal}
+  <AddSongModal
+    onClose={() => showAddModal = false}
+    onSuccess={handleSongAdded}
+  />
+{/if}
+
+<!-- Delete Confirmation Modal -->
+{#if deleteConfirmId !== null}
+  {@const songToDelete = songs.find(s => s.id === deleteConfirmId)}
+  <div class="modal-overlay" onclick={() => deleteConfirmId = null}>
+    <div class="modal-content" onclick={(e) => e.stopPropagation()}>
+      <h2 class="text-xl font-semibold mb-4">Delete Song?</h2>
+      <p class="text-gray-400 mb-6">
+        Are you sure you want to delete "{songToDelete?.title}"? This will remove the song and all its data.
+      </p>
+      <div class="flex gap-3 justify-end">
+        <button
+          onclick={() => deleteConfirmId = null}
+          class="btn-secondary"
+        >
+          Cancel
+        </button>
+        <button
+          onclick={() => deleteConfirmId && handleDelete(deleteConfirmId)}
+          class="btn-danger"
+        >
+          Delete
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Import Progress Modal -->
+{#if importing}
+  <div class="modal-overlay">
+    <div class="modal-content text-center">
+      <div class="animate-spin h-12 w-12 border-4 border-[var(--color-game-accent)] border-t-transparent rounded-full mx-auto mb-4"></div>
+      <h2 class="text-xl font-semibold mb-2">Importing Songs</h2>
+      <p class="text-gray-400">{importProgress || 'Please wait...'}</p>
+    </div>
+  </div>
+{/if}
+
+<!-- Import Result Modal -->
+{#if importResult}
+  <div class="modal-overlay" onclick={() => importResult = null}>
+    <div class="modal-content" onclick={(e) => e.stopPropagation()}>
+      <h2 class="text-xl font-semibold mb-4">
+        {importResult.success ? 'Import Complete' : 'Import Failed'}
+      </h2>
+
+      {#if importResult.songsImported > 0}
+        <div class="mb-4">
+          <p class="text-green-400 mb-2">
+            Successfully imported {importResult.songsImported} song{importResult.songsImported > 1 ? 's' : ''}:
+          </p>
+          <ul class="text-sm text-gray-400 space-y-1 max-h-32 overflow-y-auto">
+            {#each importResult.songs as song}
+              <li>{song.artist} - {song.title}</li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
+
+      {#if importResult.errors.length > 0}
+        <div class="mb-4">
+          <p class="text-red-400 mb-2">Errors:</p>
+          <ul class="text-sm text-gray-400 space-y-1 max-h-32 overflow-y-auto">
+            {#each importResult.errors as error}
+              <li class="text-red-300">{error}</li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
+
+      <div class="flex justify-end">
+        <button
+          onclick={() => importResult = null}
+          class="btn-primary"
+        >
+          OK
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}

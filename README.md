@@ -1,6 +1,57 @@
-# AutoStepper - Python Version
+# AutoStepper
 
 **Generate StepMania/ITGMania charts from audio or YouTube**
+
+Two ways to use AutoStepper:
+
+| Version | Description | Best For |
+|---------|-------------|----------|
+| **[CLI](#cli-version)** | Python command-line tool | Creating .zip packages for StepMania/ITGMania |
+| **[Web](#web-version)** | Browser-based game | Playing with dance pad directly in browser |
+
+---
+
+## Web Version
+
+Play dance games directly in your browser with USB dance pad support!
+
+```bash
+# Install Deno (required for YouTube downloads)
+curl -fsSL https://deno.land/install.sh | sh  # Linux
+# or: brew install deno  # macOS
+
+# Setup Python (uses same venv as CLI)
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+# Setup web frontend
+cd web
+npm install
+cp .env.example .env
+
+# Terminal 1: Start local download server
+source venv/bin/activate
+python infrastructure/local/server.py
+
+# Terminal 2: Start web app
+cd web
+npm run dev
+# Open http://localhost:5173
+```
+
+See [web/README.md](web/README.md) for full documentation.
+
+**Features:**
+- Download songs from YouTube
+- Automatic beat detection and chart generation
+- Dance pad support via Gamepad API
+- Keyboard controls (Arrow keys)
+- Song library with browser storage
+
+---
+
+## CLI Version
 
 A Python tool that creates ready-to-distribute StepMania packages with beat detection powered by `librosa`.
 

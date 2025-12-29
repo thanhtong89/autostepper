@@ -1,13 +1,11 @@
 /**
  * YouTube download API client
  *
- * Communicates with the Tauri backend (or local dev server) to download YouTube audio.
- *
- * Set VITE_DOWNLOAD_API_URL in .env for local development:
- *   http://localhost:5000/download
+ * Uses Tauri backend for YouTube downloads.
+ * Falls back to fetch-based API if not running in Tauri (development).
  */
 
-const DOWNLOAD_API_URL = import.meta.env.VITE_DOWNLOAD_API_URL || '';
+import { invoke } from '@tauri-apps/api/core';
 
 export interface DownloadResponse {
   id: string;
@@ -19,46 +17,81 @@ export interface DownloadResponse {
   fileSize: number;
 }
 
-export interface DownloadError {
-  error: string;
+export interface DependencyStatus {
+  ytdlp: boolean;
+  ytdlp_path: string | null;
+  deno: boolean;
+  deno_path: string | null;
+  ffmpeg: boolean;
+  cookies_browser: string | null;  // Browser detected for cookies fallback
 }
 
 /**
- * Request audio download from YouTube
+ * Check if running in Tauri
+ */
+function isTauri(): boolean {
+  return '__TAURI_INTERNALS__' in window;
+}
+
+/**
+ * Request audio download from YouTube via Tauri backend
  */
 export async function downloadFromYouTube(youtubeUrl: string): Promise<DownloadResponse> {
-  if (!DOWNLOAD_API_URL) {
-    throw new Error('Download API URL not configured. Set VITE_DOWNLOAD_API_URL in your .env file.');
+  if (!isTauri()) {
+    throw new Error('YouTube downloads require the desktop app. Please run with Tauri.');
   }
 
-  const response = await fetch(DOWNLOAD_API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ url: youtubeUrl }),
-  });
-
-  const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error((data as DownloadError).error || 'Download failed');
-  }
-
-  return data as DownloadResponse;
+  return invoke<DownloadResponse>('download_youtube', { youtubeUrl });
 }
 
 /**
- * Fetch audio file from download URL
+ * Fetch audio file as Blob from Tauri backend
+ * Uses asset protocol for efficient streaming
  */
 export async function fetchAudioBlob(downloadUrl: string): Promise<Blob> {
-  const response = await fetch(downloadUrl);
-
-  if (!response.ok) {
-    throw new Error(`Failed to fetch audio: ${response.statusText}`);
+  if (!isTauri()) {
+    throw new Error('Audio fetching requires the desktop app.');
   }
 
-  return response.blob();
+  // Extract song ID from the download URL (format: autostepper://audio/{id})
+  const songId = downloadUrl.replace('autostepper://audio/', '');
+  console.log('[fetchAudioBlob] songId:', songId);
+
+  // Get the file path from Tauri
+  const filePath = await invoke<string>('get_audio_path', { songId });
+  console.log('[fetchAudioBlob] filePath:', filePath);
+
+  // Use asset protocol for direct streaming
+  const { convertFileSrc } = await import('@tauri-apps/api/core');
+  const assetUrl = convertFileSrc(filePath);
+  console.log('[fetchAudioBlob] assetUrl:', assetUrl);
+
+  const response = await fetch(assetUrl);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch audio: ${response.status} ${response.statusText}`);
+  }
+
+  const blob = await response.blob();
+  console.log('[fetchAudioBlob] Got blob, size:', blob.size);
+  return blob;
+}
+
+/**
+ * Check if required dependencies are available
+ */
+export async function checkDependencies(): Promise<DependencyStatus> {
+  if (!isTauri()) {
+    return {
+      ytdlp: false,
+      ytdlp_path: null,
+      deno: false,
+      deno_path: null,
+      ffmpeg: false,
+      cookies_browser: null,
+    };
+  }
+
+  return invoke<DependencyStatus>('check_dependencies');
 }
 
 /**
@@ -127,8 +160,8 @@ export function getYouTubeThumbnail(videoId: string, quality: 'default' | 'mediu
 }
 
 /**
- * Check if download API is configured
+ * Check if download API is configured (always true in Tauri)
  */
 export function isDownloadConfigured(): boolean {
-  return !!DOWNLOAD_API_URL;
+  return isTauri();
 }

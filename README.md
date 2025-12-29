@@ -31,17 +31,64 @@ Play dance games on your computer with USB dance pad support! Downloads from You
 ```bash
 # Install Rust (if not already installed)
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source ~/.cargo/env
+
+# Linux only: Install Tauri system dependencies
+sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
 
 # Install Tauri CLI
-cargo install tauri-cli
+cargo install tauri-cli --version "^2"
 
 # Install web dependencies
 cd web
 npm install
-
-# Run in development mode
-npm run tauri dev
 ```
+
+### Local Testing
+
+```bash
+cd web
+
+# Run in development mode (hot-reload enabled)
+npm run tauri:dev
+```
+
+This will:
+1. Start the Vite dev server on http://localhost:5173
+2. Compile the Rust backend (~1-2 min first time)
+3. Launch the desktop app window
+
+**Test the full flow:**
+1. Click **Library** → **Add Song**
+2. Paste a YouTube URL (e.g., `https://www.youtube.com/watch?v=dQw4w9WgXcQ`)
+3. Wait for download + processing (~30-60 seconds)
+4. Go to **Play** → Select song → Choose difficulty → **Start Game**
+5. Play with arrow keys or USB dance pad!
+
+**Check dependencies:** The app auto-detects yt-dlp, Deno, ffmpeg, and browser cookies. If YouTube blocks downloads, it automatically retries using cookies from Chrome/Firefox.
+
+### Troubleshooting
+
+**"yt-dlp not found"**
+```bash
+pip install yt-dlp
+# or
+brew install yt-dlp  # macOS
+```
+
+**"YouTube bot detection triggered"**
+1. Install Deno: `curl -fsSL https://deno.land/install.sh | sh`
+2. If still failing, log into YouTube in Chrome/Firefox - the app will use your browser cookies as fallback
+
+**Rust compilation errors on Linux**
+```bash
+sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+```
+
+**Window doesn't open**
+- Check terminal for errors
+- Ensure port 5173 is free
+- Try `npm run tauri:dev` again
 
 ### Building
 

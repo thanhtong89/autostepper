@@ -119,7 +119,14 @@
 
     } catch (e) {
       console.error('Failed to add song:', e);
-      errorMessage = e instanceof Error ? e.message : 'An unknown error occurred';
+      // Tauri errors may be strings, not Error objects
+      if (typeof e === 'string') {
+        errorMessage = e;
+      } else if (e instanceof Error) {
+        errorMessage = e.message;
+      } else {
+        errorMessage = String(e);
+      }
       status = 'error';
 
       // Update song status to error if we created one

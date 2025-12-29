@@ -86,26 +86,68 @@
 
     try {
       const blob = await getAudioBlob(songId);
-      if (!blob) return;
+
+      // Dump blob stats
+      console.log('[playPreview] Blob stats:', {
+        songId,
+        exists: !!blob,
+        size: blob?.size,
+        type: blob?.type,
+        isBlob: blob instanceof Blob,
+      });
+
+      if (!blob || blob.size === 0) {
+        console.log('[playPreview] No valid blob for songId:', songId);
+        return;
+      }
+
+      // Check first few bytes to verify it's valid audio
+      const header = await blob.slice(0, 16).arrayBuffer();
+      const headerBytes = new Uint8Array(header);
+      console.log('[playPreview] First 16 bytes:', Array.from(headerBytes).map(b => b.toString(16).padStart(2, '0')).join(' '));
 
       // Check if we switched songs while loading
       if (selectedSongId !== songId) return;
 
-      // Create object URL for the audio
-      previewUrl = URL.createObjectURL(blob);
-      previewAudio = new Audio(previewUrl);
-      previewAudio.volume = 0.5;
-
-      // Start preview at 30% into the song (like StepMania's sample start)
+      // Get song info for seek position
       const song = songs.find(s => s.id === songId);
-      if (song) {
-        previewAudio.currentTime = song.duration * 0.3;
-      }
+      const startTime = song ? song.duration * 0.3 : 0;
 
-      // Loop preview
-      previewAudio.loop = true;
+      // Ensure blob has correct MIME type (may be lost in IndexedDB storage)
+      const typedBlob = blob.type === 'audio/mpeg' ? blob : new Blob([blob], { type: 'audio/mpeg' });
+      previewUrl = URL.createObjectURL(typedBlob);
+      console.log('[playPreview] Created URL:', previewUrl, 'blob type:', typedBlob.type);
 
+      previewAudio = new Audio();
+      previewAudio.volume = 0.5;
+      previewAudio.preload = 'auto';
+
+      // Step 1: Set src and wait for metadata (so we can seek)
+      await new Promise<void>((resolve, reject) => {
+        if (!previewAudio) return reject(new Error('No audio element'));
+        previewAudio.onloadedmetadata = () => {
+          console.log('[playPreview] Metadata loaded, duration:', previewAudio?.duration);
+          resolve();
+        };
+        previewAudio.onerror = () => reject(previewAudio?.error || new Error('Load failed'));
+        previewAudio.src = previewUrl;
+      });
+
+      if (selectedSongId !== songId || !previewAudio) return;
+
+      // Step 2: Seek to start position and wait for seek to complete
+      await new Promise<void>((resolve, reject) => {
+        if (!previewAudio) return reject(new Error('No audio element'));
+        previewAudio.onseeked = () => resolve();
+        previewAudio.onerror = () => reject(previewAudio?.error || new Error('Seek failed'));
+        previewAudio.currentTime = startTime;
+      });
+
+      if (selectedSongId !== songId || !previewAudio) return;
+
+      // Step 3: Play, then enable loop
       await previewAudio.play();
+      previewAudio.loop = true;
       isPreviewPlaying = true;
 
       // Fade out after 15 seconds and restart
@@ -115,7 +157,7 @@
         }
       }, 15000);
     } catch (e) {
-      console.error('Failed to play preview:', e);
+      console.error('[playPreview] Failed:', e);
     }
   }
 

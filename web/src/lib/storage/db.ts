@@ -76,6 +76,22 @@ class AutoStepperDB extends Dexie {
       charts: 'songId',
       playlists: '++id, name, createdAt'
     });
+
+    // Version 2: Add youtubeUrl index for duplicate checking
+    this.version(2).stores({
+      songs: '++id, title, artist, status, createdAt, youtubeUrl',
+      audioBlobs: 'songId',
+      charts: 'songId',
+      playlists: '++id, name, createdAt'
+    });
+
+    // Version 3: Add updatedAt index to playlists
+    this.version(3).stores({
+      songs: '++id, title, artist, status, createdAt, youtubeUrl',
+      audioBlobs: 'songId',
+      charts: 'songId',
+      playlists: '++id, name, createdAt, updatedAt'
+    });
   }
 }
 

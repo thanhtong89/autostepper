@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Song } from '$lib/storage/db';
-  import { extractVideoId, getYouTubeThumbnail } from '$lib/api/lambda';
+  import { extractVideoId, getYouTubeThumbnail } from '$lib/api/youtube';
   import { exportSongToZip, downloadBlob } from '$lib/formats/zip';
 
   interface Props {

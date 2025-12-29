@@ -7,47 +7,57 @@ Two ways to use AutoStepper:
 | Version | Description | Best For |
 |---------|-------------|----------|
 | **[CLI](#cli-version)** | Python command-line tool | Creating .zip packages for StepMania/ITGMania |
-| **[Web](#web-version)** | Browser-based game | Playing with dance pad directly in browser |
+| **[Desktop App](#desktop-app)** | Tauri-based desktop app | Playing with dance pad directly |
 
 ---
 
-## Web Version
+## Desktop App
 
-Play dance games directly in your browser with USB dance pad support!
+Play dance games on your computer with USB dance pad support! Downloads from YouTube, generates charts automatically.
+
+### Prerequisites
+
+- **Deno** - Required by yt-dlp for YouTube's JavaScript challenges
+  - macOS: `brew install deno`
+  - Linux: `curl -fsSL https://deno.land/install.sh | sh`
+- **ffmpeg** - Audio conversion
+  - macOS: `brew install ffmpeg`
+  - Ubuntu: `sudo apt install ffmpeg`
+- **yt-dlp** - YouTube downloads
+  - `pip install yt-dlp` or `brew install yt-dlp`
+
+### Development Setup
 
 ```bash
-# Install Deno (required for YouTube downloads)
-curl -fsSL https://deno.land/install.sh | sh  # Linux
-# or: brew install deno  # macOS
+# Install Rust (if not already installed)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# Setup Python (uses same venv as CLI)
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+# Install Tauri CLI
+cargo install tauri-cli
 
-# Setup web frontend
+# Install web dependencies
 cd web
 npm install
-cp .env.example .env
 
-# Terminal 1: Start local download server
-source venv/bin/activate
-python infrastructure/local/server.py
-
-# Terminal 2: Start web app
-cd web
-npm run dev
-# Open http://localhost:5173
+# Run in development mode
+npm run tauri dev
 ```
 
-See [web/README.md](web/README.md) for full documentation.
+### Building
+
+```bash
+cd web
+npm run tauri build
+```
+
+This creates platform-specific installers in `web/src-tauri/target/release/bundle/`.
 
 **Features:**
 - Download songs from YouTube
 - Automatic beat detection and chart generation
 - Dance pad support via Gamepad API
 - Keyboard controls (Arrow keys)
-- Song library with browser storage
+- Song library with local storage
 
 ---
 

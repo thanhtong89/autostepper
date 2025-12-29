@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { downloadFromYouTube, fetchAudioBlob, isValidYouTubeUrl, isLambdaConfigured } from '$lib/api/lambda';
+  import { downloadFromYouTube, fetchAudioBlob, isValidYouTubeUrl, isDownloadConfigured } from '$lib/api/youtube';
   import { addSong, updateSongStatus, saveAudioBlob, saveChart, songExists } from '$lib/storage/library';
   import { analyzeAudio } from '$lib/audio/analyzer';
   import { generateAllDifficulties } from '$lib/charts/generator';
@@ -33,9 +33,9 @@
 
     errorMessage = '';
 
-    // Check if Lambda is configured
-    if (!isLambdaConfigured()) {
-      errorMessage = 'Lambda URL not configured. Please set VITE_LAMBDA_URL in your .env file.';
+    // Check if download API is configured
+    if (!isDownloadConfigured()) {
+      errorMessage = 'Download API not configured. Please set VITE_DOWNLOAD_API_URL in your .env file.';
       status = 'error';
       return;
     }
@@ -78,7 +78,7 @@
         thumbnail: downloadResult.thumbnail
       });
 
-      // Fetch audio blob from S3
+      // Fetch audio blob
       status = 'fetching';
       progress = 'Downloading audio file...';
       const audioBlob = await fetchAudioBlob(downloadResult.downloadUrl);

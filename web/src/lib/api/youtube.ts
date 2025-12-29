@@ -1,16 +1,13 @@
 /**
- * AWS Lambda API client for YouTube audio download
+ * YouTube download API client
  *
- * Supports both:
- * - Production: AWS Lambda Function URL
- * - Development: Local Python server (infrastructure/local/server.py)
+ * Communicates with the Tauri backend (or local dev server) to download YouTube audio.
  *
- * Set VITE_LAMBDA_URL in .env:
- * - Local dev: http://localhost:5000/download
- * - Production: https://xxx.lambda-url.region.on.aws/
+ * Set VITE_DOWNLOAD_API_URL in .env for local development:
+ *   http://localhost:5000/download
  */
 
-const LAMBDA_URL = import.meta.env.VITE_LAMBDA_URL || '';
+const DOWNLOAD_API_URL = import.meta.env.VITE_DOWNLOAD_API_URL || '';
 
 export interface DownloadResponse {
   id: string;
@@ -27,14 +24,14 @@ export interface DownloadError {
 }
 
 /**
- * Request audio download from YouTube via Lambda
+ * Request audio download from YouTube
  */
 export async function downloadFromYouTube(youtubeUrl: string): Promise<DownloadResponse> {
-  if (!LAMBDA_URL) {
-    throw new Error('Lambda URL not configured. Set VITE_LAMBDA_URL in your .env file.');
+  if (!DOWNLOAD_API_URL) {
+    throw new Error('Download API URL not configured. Set VITE_DOWNLOAD_API_URL in your .env file.');
   }
 
-  const response = await fetch(LAMBDA_URL, {
+  const response = await fetch(DOWNLOAD_API_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -52,7 +49,7 @@ export async function downloadFromYouTube(youtubeUrl: string): Promise<DownloadR
 }
 
 /**
- * Fetch audio file from S3 pre-signed URL
+ * Fetch audio file from download URL
  */
 export async function fetchAudioBlob(downloadUrl: string): Promise<Blob> {
   const response = await fetch(downloadUrl);
@@ -130,8 +127,8 @@ export function getYouTubeThumbnail(videoId: string, quality: 'default' | 'mediu
 }
 
 /**
- * Check if Lambda is configured
+ * Check if download API is configured
  */
-export function isLambdaConfigured(): boolean {
-  return !!LAMBDA_URL;
+export function isDownloadConfigured(): boolean {
+  return !!DOWNLOAD_API_URL;
 }

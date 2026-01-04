@@ -4,6 +4,7 @@
   import { page } from '$app/stores';
   import { getSong, getAudioBlob, getChart } from '$lib/storage/library';
   import { GameEngine, type GameState } from '$lib/game/engine';
+  import { audioService } from '$lib/audio/audioService';
   import type { GameScore, Judgment } from '$lib/game/scoring';
   import type { Song, ChartData } from '$lib/storage/db';
   import { navigateList } from '$lib/navigation/focus';
@@ -14,6 +15,7 @@
   let chartData = $state<ChartData | null>(null);
   let loading = $state(true);
   let error = $state<string | null>(null);
+  let audioDuration = $state(0);
 
   // Game state
   let gameState = $state<GameState>('idle');
@@ -35,9 +37,37 @@
 
   // Refs
   let canvas: HTMLCanvasElement;
-  let audioElement: HTMLAudioElement;
   let engine: GameEngine | null = null;
-  let audioUrl: string | null = null;
+
+  // Progress tracking
+  let currentTime = $state(0);
+  let progressInterval: ReturnType<typeof setInterval> | null = null;
+
+  // Derived progress values
+  let progress = $derived(audioDuration > 0 ? Math.min(1, Math.max(0, currentTime / audioDuration)) : 0);
+  let remainingTime = $derived(Math.max(0, audioDuration - currentTime));
+
+  function formatTime(seconds: number): string {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  }
+
+  function startProgressTracking() {
+    stopProgressTracking();
+    progressInterval = setInterval(() => {
+      if (gameState === 'playing') {
+        currentTime = audioService.getCurrentTime();
+      }
+    }, 100); // Update 10x per second
+  }
+
+  function stopProgressTracking() {
+    if (progressInterval) {
+      clearInterval(progressInterval);
+      progressInterval = null;
+    }
+  }
 
   // Get params from URL
   let songId = $derived(parseInt($page.url.searchParams.get('songId') || '0'));
@@ -60,14 +90,24 @@
       }
       song = loadedSong;
 
-      // Load audio blob
+      // Load audio blob and pre-decode for gameplay
       const blob = await getAudioBlob(songId);
       if (!blob) {
         error = 'Audio not found';
         loading = false;
         return;
       }
-      audioUrl = URL.createObjectURL(blob);
+
+      // Check if audio is already loaded (from preview)
+      if (audioService.isLoaded()) {
+        audioDuration = audioService.getDuration();
+        console.log('[Game] Audio already loaded from preview, duration:', audioDuration);
+      } else {
+        // Pre-decode audio using Web Audio API for stutter-free playback
+        console.log('[Game] Pre-decoding audio...');
+        audioDuration = await audioService.loadAudio(blob);
+        console.log('[Game] Audio decoded, duration:', audioDuration);
+      }
 
       // Load chart
       const chart = await getChart(songId);
@@ -82,7 +122,7 @@
 
       // Wait for DOM to update, then initialize game
       await tick();
-      console.log('Canvas:', canvas, 'Audio:', audioElement);
+      console.log('Canvas:', canvas);
       await initGame();
     } catch (e) {
       console.error('Failed to load game:', e);
@@ -92,17 +132,17 @@
   });
 
   onDestroy(() => {
+    stopProgressTracking();
     if (engine) {
       engine.stop();
     }
-    if (audioUrl) {
-      URL.revokeObjectURL(audioUrl);
-    }
+    // Clean up audio resources
+    audioService.unload();
   });
 
   async function initGame() {
-    console.log('initGame called', { chartData: !!chartData, audioUrl: !!audioUrl, canvas: !!canvas, audioElement: !!audioElement });
-    if (!chartData || !audioUrl || !canvas || !audioElement) {
+    console.log('initGame called', { chartData: !!chartData, audioDuration, canvas: !!canvas });
+    if (!chartData || !audioDuration || !canvas) {
       console.error('Missing required elements for game init');
       return;
     }
@@ -113,22 +153,24 @@
       return;
     }
 
-    // Set audio source
-    audioElement.src = audioUrl;
-    await audioElement.load();
-
     // Resize canvas
     resizeCanvas();
 
-    // Create engine
+    // Create engine (audio is already pre-decoded in audioService)
     engine = new GameEngine(
       canvas,
-      audioElement,
       difficultyChart,
+      audioDuration,
       { scrollSpeed: 1 },
       {
         onStateChange: (state) => {
           gameState = state;
+          // Start/stop progress tracking based on state
+          if (state === 'playing' || state === 'leadin') {
+            startProgressTracking();
+          } else {
+            stopProgressTracking();
+          }
         },
         onScoreUpdate: (score) => {
           currentScore = score;
@@ -282,7 +324,27 @@
     </div>
   {:else}
     <!-- Game UI -->
-    <div class="relative flex-1 flex">
+    <div class="relative flex-1 flex flex-col">
+      <!-- Progress bar at top -->
+      {#if gameState === 'playing' || gameState === 'leadin'}
+        <div class="relative h-6 bg-gray-900 flex-shrink-0">
+          <!-- Filled portion -->
+          <div
+            class="absolute inset-y-0 left-0 bg-game-accent/70 transition-all duration-100"
+            style="width: {progress * 100}%"
+          ></div>
+          <!-- Time remaining (centered, always visible) -->
+          <div class="absolute inset-0 flex items-center justify-center">
+            <span
+              class="text-sm font-mono font-bold"
+              style="color: white; text-shadow: 0 0 4px rgba(0,0,0,0.9), 0 0 2px rgba(0,0,0,1);"
+            >
+              {formatTime(remainingTime)}
+            </span>
+          </div>
+        </div>
+      {/if}
+
       <!-- Game canvas container -->
       <div class="flex-1 relative">
         <canvas
@@ -317,8 +379,6 @@
         {/if}
       </div>
 
-      <!-- Hidden audio element -->
-      <audio bind:this={audioElement} class="hidden"></audio>
     </div>
 
     <!-- Pause overlay -->

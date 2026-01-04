@@ -6,6 +6,7 @@
   import { getPlaylist, getPlaylistSongs, type Playlist } from '$lib/storage/playlists';
   import { createKeyboardHandler } from '$lib/navigation/keyboard';
   import { navigateList, scrollItemIntoView } from '$lib/navigation/focus';
+  import { audioService } from '$lib/audio/audioService';
   import type { NavigationAction } from '$lib/navigation/types';
 
   let songs = $state<Song[]>([]);
@@ -23,15 +24,15 @@
   let difficultyElements: HTMLElement[] = [];
   let startButtonElement: HTMLElement;
 
-  // Song preview
-  let previewAudio: HTMLAudioElement | null = null;
-  let previewUrl: string | null = null;
-  let isPreviewPlaying = $state(false);
-  let previewTimeout: ReturnType<typeof setTimeout> | null = null;
-  let fadeInterval: ReturnType<typeof setInterval> | null = null;
+  // Audio loading state
+  let audioLoading = $state(false);
+  let loadedSongId = $state<number | null>(null);
 
   // Get playlist ID from URL if present
   let playlistId = $derived($page.url.searchParams.get('playlist'));
+
+  // Preview plays when audio is loaded and we're in difficulty/start panel
+  let isPreviewPlaying = $derived(loadedSongId !== null && activePanel !== 'songs');
 
   onMount(async () => {
     try {
@@ -54,9 +55,9 @@
         if (songIndex >= 0) {
           songFocusIndex = songIndex;
           selectedSongId = songId;
+          // Load audio and move to difficulty panel
+          await loadAndPlayPreview(songId);
           activePanel = 'difficulty';
-          // Start preview
-          playPreview(songId);
           // Scroll selected song into view after DOM updates
           requestAnimationFrame(() => {
             scrollItemIntoView(songElements[songIndex]);
@@ -73,162 +74,72 @@
     stopPreview();
   });
 
-  async function selectSong(songId: number) {
-    if (selectedSongId === songId) return;
-
-    selectedSongId = songId;
-    await playPreview(songId);
-  }
-
-  async function playPreview(songId: number) {
+  async function loadAndPlayPreview(songId: number) {
     // Stop any current preview
     stopPreview();
 
+    audioLoading = true;
+
     try {
       const blob = await getAudioBlob(songId);
-
-      // Dump blob stats
-      console.log('[playPreview] Blob stats:', {
-        songId,
-        exists: !!blob,
-        size: blob?.size,
-        type: blob?.type,
-        isBlob: blob instanceof Blob,
-      });
-
       if (!blob || blob.size === 0) {
-        console.log('[playPreview] No valid blob for songId:', songId);
+        console.error('No valid audio blob for song:', songId);
+        audioLoading = false;
         return;
       }
 
-      // Check first few bytes to verify it's valid audio
-      const header = await blob.slice(0, 16).arrayBuffer();
-      const headerBytes = new Uint8Array(header);
-      console.log('[playPreview] First 16 bytes:', Array.from(headerBytes).map(b => b.toString(16).padStart(2, '0')).join(' '));
+      // Check if user switched songs while loading
+      if (selectedSongId !== songId) {
+        audioLoading = false;
+        return;
+      }
 
-      // Check if we switched songs while loading
-      if (selectedSongId !== songId) return;
+      // Decode audio (this blocks until done - intentional)
+      console.log('[Preview] Loading audio for song:', songId);
+      const duration = await audioService.loadAudio(blob);
+      console.log('[Preview] Audio loaded, duration:', duration);
 
-      // Get song info for seek position
-      const song = songs.find(s => s.id === songId);
-      const startTime = song ? song.duration * 0.3 : 0;
+      // Check again if user switched
+      if (selectedSongId !== songId) {
+        audioLoading = false;
+        return;
+      }
 
-      // Ensure blob has correct MIME type (may be lost in IndexedDB storage)
-      const typedBlob = blob.type === 'audio/mpeg' ? blob : new Blob([blob], { type: 'audio/mpeg' });
-      previewUrl = URL.createObjectURL(typedBlob);
-      console.log('[playPreview] Created URL:', previewUrl, 'blob type:', typedBlob.type);
+      loadedSongId = songId;
+      audioLoading = false;
 
-      previewAudio = new Audio();
-      previewAudio.volume = 0.5;
-      previewAudio.preload = 'auto';
+      // Play 15-second looping preview starting at 30% into the song
+      const previewStart = duration * 0.3;
+      const previewDuration = Math.min(15, duration - previewStart);
 
-      // Step 1: Set src and wait for metadata (so we can seek)
-      await new Promise<void>((resolve, reject) => {
-        if (!previewAudio) return reject(new Error('No audio element'));
-        previewAudio.onloadedmetadata = () => {
-          console.log('[playPreview] Metadata loaded, duration:', previewAudio?.duration);
-          resolve();
-        };
-        previewAudio.onerror = () => reject(previewAudio?.error || new Error('Load failed'));
-        previewAudio.src = previewUrl;
+      audioService.play({
+        offset: previewStart,
+        duration: previewDuration,
+        loop: true,
+        volume: 0.5
       });
 
-      if (selectedSongId !== songId || !previewAudio) return;
-
-      // Step 2: Seek to start position and wait for seek to complete
-      await new Promise<void>((resolve, reject) => {
-        if (!previewAudio) return reject(new Error('No audio element'));
-        previewAudio.onseeked = () => resolve();
-        previewAudio.onerror = () => reject(previewAudio?.error || new Error('Seek failed'));
-        previewAudio.currentTime = startTime;
-      });
-
-      if (selectedSongId !== songId || !previewAudio) return;
-
-      // Step 3: Play, then enable loop
-      await previewAudio.play();
-      previewAudio.loop = true;
-      isPreviewPlaying = true;
-
-      // Fade out after 15 seconds and restart
-      previewTimeout = setTimeout(() => {
-        if (previewAudio && isPreviewPlaying && selectedSongId === songId) {
-          fadeOutAndRestart(songId);
-        }
-      }, 15000);
     } catch (e) {
-      console.error('[playPreview] Failed:', e);
+      console.error('Failed to load audio:', e);
+      audioLoading = false;
     }
-  }
-
-  function fadeOutAndRestart(songId: number) {
-    if (!previewAudio) return;
-
-    // Clear any existing fade interval
-    if (fadeInterval) {
-      clearInterval(fadeInterval);
-    }
-
-    fadeInterval = setInterval(() => {
-      // Stop if song changed or audio cleared
-      if (!previewAudio || selectedSongId !== songId) {
-        if (fadeInterval) {
-          clearInterval(fadeInterval);
-          fadeInterval = null;
-        }
-        return;
-      }
-
-      if (previewAudio.volume > 0.05) {
-        previewAudio.volume = Math.max(0, previewAudio.volume - 0.05);
-      } else {
-        if (fadeInterval) {
-          clearInterval(fadeInterval);
-          fadeInterval = null;
-        }
-        // Reset to start of preview section
-        const song = songs.find(s => s.id === songId);
-        if (song && previewAudio && selectedSongId === songId) {
-          previewAudio.currentTime = song.duration * 0.3;
-          previewAudio.volume = 0.5;
-
-          // Schedule next fade cycle
-          previewTimeout = setTimeout(() => {
-            if (previewAudio && isPreviewPlaying && selectedSongId === songId) {
-              fadeOutAndRestart(songId);
-            }
-          }, 15000);
-        }
-      }
-    }, 50);
   }
 
   function stopPreview() {
-    // Clear timers first
-    if (previewTimeout) {
-      clearTimeout(previewTimeout);
-      previewTimeout = null;
-    }
-    if (fadeInterval) {
-      clearInterval(fadeInterval);
-      fadeInterval = null;
-    }
+    audioService.stop();
+    // Note: We keep the audio loaded so the game can reuse it
+    // Only unload when selecting a different song
+  }
 
-    // Stop and cleanup audio
-    if (previewAudio) {
-      previewAudio.pause();
-      previewAudio = null;
-    }
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl);
-      previewUrl = null;
-    }
-    isPreviewPlaying = false;
+  function unloadAudio() {
+    audioService.unload();
+    loadedSongId = null;
   }
 
   function startGame() {
     if (!selectedSongId) return;
-    stopPreview();
+    // Stop preview but keep audio loaded for game
+    audioService.stop();
     goto(`/play/game?songId=${selectedSongId}&difficulty=${selectedDifficulty}`);
   }
 
@@ -246,14 +157,19 @@
   ] as const;
 
   function handleNavigation(action: NavigationAction) {
-    if (loading) return;
+    if (loading || audioLoading) return;
 
     if (action === 'back') {
       // Escape behavior depends on current panel
       if (activePanel === 'start') {
+        activePanel = 'difficulty';
+      } else if (activePanel === 'difficulty') {
+        // Go back to song list, stop preview
+        stopPreview();
         activePanel = 'songs';
       } else {
-        stopPreview();
+        // On song list, unload audio and go home
+        unloadAudio();
         goto('/');
       }
       return;
@@ -271,18 +187,27 @@
       if (action === 'up' || action === 'down') {
         const result = navigateList(songFocusIndex, action, songs.length);
         songFocusIndex = result.index;
-        // Auto-select and preview the song
-        const song = songs[songFocusIndex];
-        if (song?.id) {
-          selectSong(song.id);
-        }
+        // Just highlight, don't select or play preview yet
         scrollItemIntoView(songElements[songFocusIndex]);
-      } else if (action === 'right' && selectedSongId) {
-        // Move to difficulty panel
+      } else if (action === 'right' && selectedSongId && loadedSongId === selectedSongId) {
+        // Move to difficulty panel only if audio is loaded
         activePanel = 'difficulty';
+        // Resume preview if it was stopped
+        if (!audioService.isPlaying() && loadedSongId) {
+          const song = songs.find(s => s.id === loadedSongId);
+          if (song) {
+            const previewStart = song.duration * 0.3;
+            const previewDuration = Math.min(15, song.duration - previewStart);
+            audioService.play({
+              offset: previewStart,
+              duration: previewDuration,
+              loop: true,
+              volume: 0.5
+            });
+          }
+        }
       }
     } else if (activePanel === 'difficulty') {
-      // Difficulty panel - locked to up/down only
       if (action === 'up' || action === 'down') {
         const result = navigateList(difficultyFocusIndex, action, 4);
         difficultyFocusIndex = result.index;
@@ -291,20 +216,30 @@
       }
       // No left/right - must use Enter to confirm or Escape to go back
     } else if (activePanel === 'start') {
-      // Start button focused
       if (action === 'left') {
-        activePanel = 'songs';
+        activePanel = 'difficulty';
       } else if (action === 'up') {
         activePanel = 'difficulty';
       }
     }
   }
 
-  function handleSelect() {
+  async function handleSelect() {
     if (activePanel === 'songs') {
       if (songs.length > 0 && songs[songFocusIndex]?.id) {
-        selectSong(songs[songFocusIndex].id!);
-        // Move to difficulty panel after selecting
+        const songId = songs[songFocusIndex].id!;
+
+        // If selecting a different song, unload previous
+        if (loadedSongId !== null && loadedSongId !== songId) {
+          unloadAudio();
+        }
+
+        selectedSongId = songId;
+
+        // Load audio and play preview (blocks until loaded)
+        await loadAndPlayPreview(songId);
+
+        // Move to difficulty panel after loading
         activePanel = 'difficulty';
       }
     } else if (activePanel === 'difficulty') {
@@ -370,13 +305,25 @@
           {#each songs as song, i (song.id)}
             <button
               bind:this={songElements[i]}
-              onclick={() => selectSong(song.id!)}
+              onclick={async () => {
+                if (song.id) {
+                  songFocusIndex = i;
+                  if (loadedSongId !== song.id) {
+                    if (loadedSongId !== null) unloadAudio();
+                    selectedSongId = song.id;
+                    await loadAndPlayPreview(song.id);
+                  }
+                  activePanel = 'difficulty';
+                }
+              }}
+              disabled={audioLoading}
               class="w-full text-left p-3 flex items-center gap-4 rounded-xl transition-all
                      {activePanel === 'songs' && songFocusIndex === i
                        ? 'nav-focused'
                        : selectedSongId === song.id
                          ? 'bg-[var(--color-game-accent)]/20 border-2 border-[var(--color-game-accent)]'
-                         : 'bg-[var(--color-game-panel)] border border-[var(--color-game-border)] hover:border-[var(--color-game-accent)]'}"
+                         : 'bg-[var(--color-game-panel)] border border-[var(--color-game-border)] hover:border-[var(--color-game-accent)]'}
+                     disabled:opacity-50"
             >
               {#if song.thumbnail}
                 <img
@@ -394,7 +341,9 @@
                 <div class="text-sm text-gray-400 truncate">{song.artist}</div>
               </div>
               <div class="flex items-center gap-2">
-                {#if selectedSongId === song.id && isPreviewPlaying}
+                {#if audioLoading && selectedSongId === song.id}
+                  <span class="text-game-accent text-xs">Loading...</span>
+                {:else if loadedSongId === song.id && isPreviewPlaying}
                   <span class="text-[var(--color-game-accent)] text-xs animate-pulse">Playing</span>
                 {/if}
                 <span class="text-gray-500 text-sm">
@@ -419,12 +368,14 @@
             <button
               bind:this={difficultyElements[i]}
               onclick={() => { selectedDifficulty = diff.value; difficultyFocusIndex = i; }}
+              disabled={!selectedSongId || audioLoading}
               class="w-full text-left p-3 flex items-center justify-between rounded-xl transition-all
                      {activePanel === 'difficulty' && difficultyFocusIndex === i
                        ? 'nav-focused'
                        : selectedDifficulty === diff.value
                          ? 'bg-[var(--color-game-accent)]/20 border-2 border-[var(--color-game-accent)]'
-                         : 'bg-[var(--color-game-panel)] border border-[var(--color-game-border)] hover:border-[var(--color-game-accent)]'}"
+                         : 'bg-[var(--color-game-panel)] border border-[var(--color-game-border)] hover:border-[var(--color-game-accent)]'}
+                     disabled:opacity-50"
             >
               <div class="flex items-center gap-3">
                 <span class={diff.color}>{diff.label}</span>
@@ -442,11 +393,17 @@
         <button
           bind:this={startButtonElement}
           onclick={startGame}
-          disabled={!selectedSongId}
+          disabled={!selectedSongId || audioLoading}
           class="btn-primary btn-lg w-full disabled:opacity-50 disabled:cursor-not-allowed transition-all
                  {activePanel === 'start' ? 'nav-focused-pulse' : ''}"
         >
-          {selectedSongId ? 'Start Game' : 'Select a Song'}
+          {#if audioLoading}
+            Loading Audio...
+          {:else if selectedSongId}
+            Start Game
+          {:else}
+            Select a Song
+          {/if}
         </button>
 
         <!-- Controls reminder -->

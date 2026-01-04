@@ -1,5 +1,9 @@
 /**
  * Main game engine - coordinates input, scoring, and rendering
+ *
+ * Uses Web Audio API via audioService for stutter-free playback.
+ * audioContext.currentTime provides high-precision timing without
+ * the chunky updates of HTMLAudioElement.currentTime.
  */
 
 import type { Note, DifficultyChart } from '$lib/storage/db';
@@ -15,6 +19,7 @@ import {
   type Judgment
 } from './scoring';
 import { GameRenderer, type RenderState, type RendererConfig } from './renderer';
+import { audioService } from '$lib/audio/audioService';
 
 export type GameState = 'idle' | 'leadin' | 'playing' | 'paused' | 'finished';
 
@@ -51,10 +56,10 @@ interface NoteState {
 
 export class GameEngine {
   private canvas: HTMLCanvasElement;
-  private audio: HTMLAudioElement;
   private chart: DifficultyChart;
   private config: GameConfig;
   private callbacks: GameCallbacks;
+  private audioDuration: number = 0;
 
   // State
   private state: GameState = 'idle';
@@ -62,15 +67,9 @@ export class GameEngine {
   private renderer: GameRenderer;
   private noteStates: NoteState[] = [];
 
-  // Timing - high precision interpolation
+  // Timing - high precision from audioContext.currentTime
   private startTime: number = 0;
-  private pauseTime: number = 0;
   private leadInTime: number = 0;  // Virtual time during lead-in (negative to 0)
-
-  // Smooth timing: interpolate between audio.currentTime updates
-  private lastAudioTime: number = 0;
-  private lastFrameTime: number = 0;
-  private smoothTime: number = 0;
 
   // Render state
   private renderState: RenderState;
@@ -81,14 +80,14 @@ export class GameEngine {
 
   constructor(
     canvas: HTMLCanvasElement,
-    audio: HTMLAudioElement,
     chart: DifficultyChart,
+    audioDuration: number,
     config: Partial<GameConfig> = {},
     callbacks: GameCallbacks = {}
   ) {
     this.canvas = canvas;
-    this.audio = audio;
     this.chart = chart;
+    this.audioDuration = audioDuration;
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.callbacks = callbacks;
 
@@ -143,8 +142,7 @@ export class GameEngine {
   pause(): void {
     if (this.state !== 'playing') return;
 
-    this.audio.pause();
-    this.pauseTime = performance.now();
+    audioService.pause();
     this.setState('paused');
   }
 
@@ -154,18 +152,11 @@ export class GameEngine {
   resume(): void {
     if (this.state !== 'paused') return;
 
-    // Adjust start time to account for pause
-    const now = performance.now();
-    const pauseDuration = now - this.pauseTime;
-    this.startTime += pauseDuration;
-
-    // Reset smooth timing to sync with current audio position
-    this.lastAudioTime = this.audio.currentTime;
-    this.lastFrameTime = now;
-    this.smoothTime = this.audio.currentTime;
-
-    this.audio.play();
+    audioService.resume();
     this.setState('playing');
+
+    // Resume game loop
+    this.animationFrame = requestAnimationFrame(this.gameLoop);
   }
 
   /**
@@ -174,8 +165,7 @@ export class GameEngine {
   stop(): void {
     cancelAnimationFrame(this.animationFrame);
     destroyInput();
-    this.audio.pause();
-    this.audio.currentTime = 0;
+    audioService.stop();
     this.setState('idle');
   }
 
@@ -221,16 +211,8 @@ export class GameEngine {
     this.leadInTime = -this.config.leadInDuration + elapsed;
 
     if (this.leadInTime >= 0) {
-      // Lead-in complete, start music
-      this.audio.currentTime = 0;
-      this.audio.play();
-      this.startTime = now;
-
-      // Initialize smooth timing
-      this.lastAudioTime = 0;
-      this.lastFrameTime = now;
-      this.smoothTime = 0;
-
+      // Lead-in complete, start music using audioService
+      audioService.play({ offset: 0 });
       this.setState('playing');
     } else {
       // Still in lead-in - render notes scrolling with virtual time
@@ -239,43 +221,28 @@ export class GameEngine {
     }
   }
 
-  private updatePlaying(now: number): void {
-    // High-precision time interpolation for smooth scrolling
-    // audio.currentTime updates in chunks, so we interpolate between updates
-    const rawAudioTime = this.audio.currentTime;
+  private updatePlaying(_now: number): void {
+    // Get high-precision current time from audioContext
+    // No interpolation needed - audioContext.currentTime is already smooth
+    const currentTime = audioService.getCurrentTime() + (this.config.audioOffset / 1000);
 
-    if (rawAudioTime !== this.lastAudioTime) {
-      // Audio time changed - sync our smooth time
-      this.lastAudioTime = rawAudioTime;
-      this.lastFrameTime = now;
-      this.smoothTime = rawAudioTime;
-    } else {
-      // Audio time hasn't changed - interpolate based on elapsed real time
-      const elapsed = (now - this.lastFrameTime) / 1000;
-      this.smoothTime = this.lastAudioTime + elapsed;
-    }
-
-    // Use smooth time for rendering, raw audio time for game logic
-    const currentTime = this.smoothTime + (this.config.audioOffset / 1000);
-    const gameLogicTime = rawAudioTime + (this.config.audioOffset / 1000);
-
-    // Process input (use raw audio time for accurate hit detection)
-    const inputEvents = pollInput(gameLogicTime);
-    this.processInput(inputEvents, gameLogicTime);
+    // Process input
+    const inputEvents = pollInput(currentTime);
+    this.processInput(inputEvents, currentTime);
 
     // Check for missed notes
-    this.checkMissedNotes(gameLogicTime);
+    this.checkMissedNotes(currentTime);
 
     // Update hold states
-    this.updateHolds(gameLogicTime);
+    this.updateHolds(currentTime);
 
     // Check if song finished
-    if (this.audio.ended || rawAudioTime >= this.audio.duration) {
+    if (audioService.hasEnded() || currentTime >= this.audioDuration) {
       this.finishGame();
       return;
     }
 
-    // Update render state (use smooth time for visual smoothness)
+    // Update render state
     this.updateRenderState(currentTime);
 
     // Render
@@ -447,8 +414,8 @@ export class GameEngine {
       // Render game with lead-in time (notes scrolling before music)
       this.renderer.render(this.renderState, this.leadInTime);
     } else {
-      // Normal game render
-      const currentTime = this.audio.currentTime + (this.config.audioOffset / 1000);
+      // Normal game render using high-precision audio time
+      const currentTime = audioService.getCurrentTime() + (this.config.audioOffset / 1000);
       this.renderer.render(this.renderState, currentTime);
     }
   }
